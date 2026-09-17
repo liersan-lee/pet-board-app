@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.234';
+var APP_VERSION = '20260918.235';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -6393,7 +6393,7 @@ function openNewBooking(roomId, includeRoomId, reBook) {
   $('bookingBody').innerHTML = _rebookHead
     + '<div class="form-row"><div class="form-group"><label>订单类型</label><select id="bkOrderType" onchange="toggleTrainingItems()"><option value="boarding">寄养</option><option value="training">训练</option><option value="diet">减肥训练营</option></select></div>'
     + '<div class="form-group"><label style="display:flex;align-items:center"><input type="checkbox" id="bkOwnDog" onchange="updateBookingFeeEstimate()" style="width:auto;margin-right:6px">🏠 自家狗（不计入入住率 · 房费¥0）</label></div></div>'
-    + '<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><select id="bkRoom" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></select><span style="font-size:12px;color:var(--gray)">默认仅空闲房；入住日期选在未来（如春节）时，占用房也可选以排下一位客户</span></div>'
+    + '<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><select id="bkRoom" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></select><span id="bkRoomHint" style="font-size:12px;color:var(--gray)">默认仅空闲房；入住日期选在未来（如春节）时，占用房也可选以排下一位客户</span></div>'
     + '<div class="form-group" style="position:relative"><label>🔍 查找已有客户（按 姓名 / 电话 / 狗狗名 / 犬种）</label><input type="text" id="bkFind" placeholder="输入主人姓名、电话、狗狗名或犬种，边打字边出结果" data-sug="customer" data-sug-field="find" autocomplete="off"><div class="cust-suggest" id="bkFindSuggest"></div></div>'
     + '<div id="bkEditCustWrap" style="display:none;margin:0 0 12px"><button type="button" class="btn btn-outline btn-sm" onclick="editMatchedCustomer()">✏️ 编辑该客户档案（补录缺失信息）</button></div>'
     + '<div class="form-group"><label>选择客户</label><select id="bkCustomer" onchange="onCustomerSelect()">' + custHtml + '</select><span style="font-size:12px;color:var(--gray)">选已有客户自动填充，选「新建」手动填写</span></div></div>'
@@ -6440,6 +6440,8 @@ function openNewBooking(roomId, includeRoomId, reBook) {
   + '<div class="form-group" id="bkPaidGroup"><label id="bkPaidLabel">💰 实际支付金额（预付/定金）</label><input type="number" id="bkPaidAmount" placeholder="0" style="font-size:18px;font-weight:600;color:var(--success)" oninput="updatePaidAmountHint()" onchange="updatePaidAmountHint()"><div id="bkPaidHint" style="font-size:12px;color:var(--gray);margin-top:5px;line-height:1.6"></div></div>';
 
   if (roomId) { setTimeout(function(){ $('bkRoom').value = roomId; }, 50); }
+  var h3 = document.querySelector('#modalBooking .modal-header h3');
+  if (h3) h3.textContent = reBook ? ('🔁 再次预订 · ' + (DB.rooms[roomId] ? roomDisplayName(roomId) : roomId)) : '📋 新建预订';
   if (reBook) {
     reBookingRoom = roomId;
     setTimeout(function(){
@@ -6457,8 +6459,12 @@ function openNewBooking(roomId, includeRoomId, reBook) {
       });
       if (_latest) { var _cd = new Date(_latest); if (!isNaN(_cd.getTime())) { _cd.setDate(_cd.getDate() + 1); def = _cd.toISOString().slice(0, 10); } }
       var ci = document.getElementById('bkCheckIn'); if (ci) ci.value = def;
-      var sel = document.getElementById('bkRoom'); if (sel) sel.value = roomId;
       refreshBookingRoomOptions(); updateBookingFeeEstimate(); renderRebookSchedule();
+      // 保险：再次预订模式下房间下拉强制锁定为当前房（防止任何异步/竞态导致没锁上）
+      var sel = document.getElementById('bkRoom');
+      if (sel) { sel.value = roomId; sel.disabled = true; }
+      var rh = document.getElementById('bkRoomHint');
+      if (rh) { rh.innerHTML = '🔒 已锁定为当前房间，再次预订不可切换其他房间'; rh.style.color = '#D32F2F'; }
     }, 60);
   } else {
     reBookingRoom = null;
@@ -8458,7 +8464,9 @@ function autoCreateCustomer(order, dogs, skipVisitInc) {
   }
   if (existing) {
     // 传入删除黑名单：用户在客户档案里删掉的狗，不再被订单补回来
-    existing.dogs = mergeDogs(existing.dogs, dogs, existing.deletedDogs);
+    // 同时：订单里的狗狗生日不得反向写回已有客户档案，避免「清空秒弹回」
+    var dogsNoBday2 = dogs.map(function(d){ return Object.assign({}, d, {birthday: ''}); });
+    existing.dogs = mergeDogs(existing.dogs, dogsNoBday2, existing.deletedDogs);
     if (!skipVisitInc) existing.visitCount = (existing.visitCount||0) + 1;
     existing.lastVisit = order.checkIn || existing.lastVisit;
     existing.area = order.area || existing.area;
@@ -8526,9 +8534,12 @@ function archiveCustomerFromOrder(order, dogs, linkCust, skipVisitInc) {
     if (!skipVisitInc) linkCust.visitCount = (linkCust.visitCount || 0) + 1;
     linkCust.lastVisit = order.checkIn || linkCust.lastVisit;
     linkCust.updatedAt = now();
+    // 已存在客户：订单里的狗狗生日不得反向写回客户档案，避免「清空秒弹回」。
+    // 生日唯一权威在客户档案；订单仅读取档案生日，不污染档案。
+    var dogsNoBday = dogs.map(function(d){ return Object.assign({}, d, {birthday: ''}); });
     mergeCustomerInfo(linkCust, {
       ownerName: order.ownerName, phone: order.phone, idCard: idCard,
-      address: order.cityPickupAddr, dogs: dogs, notes: order.notes, area: order.area
+      address: order.cityPickupAddr, dogs: dogsNoBday, notes: order.notes, area: order.area
     });
     return linkCust;
   }
@@ -8663,7 +8674,9 @@ function doBackfillBookingCustomers() {
     if (!exist) exist = findDuplicateCustomer(phone, idCard, null);
     if (exist) {
       if (o.customerId !== exist.id) o.customerId = exist.id;
-      mergeCustomerInfo(exist, { dogs: oDogs }); // 按名去重并入，不删已有狗
+      // 一键补建档：已有客户只并入狗名/犬种等信息，生日不带入，避免反向污染客户档案
+      var oDogsNoBday = oDogs.map(function(d){ return Object.assign({}, d, {birthday: ''}); });
+      mergeCustomerInfo(exist, { dogs: oDogsNoBday }); // 按名去重并入，不删已有狗
       linked++;
       return;
     }
