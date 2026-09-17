@@ -2723,7 +2723,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260917.231';
+var APP_VERSION = '20260918.232';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -4351,7 +4351,7 @@ function dedupeCustomersByPhone() {
         var kd = {}; (keep.dogs || []).forEach(function(x){ if (x && x.name) kd[(x.name || '').trim()] = x; });
         (d.dogs || []).forEach(function(sd){
           var nm = (sd.name || '').trim(); if (!nm) return;
-          if (kd[nm]) { ['breed','gender','weight','birthday','neutered'].forEach(function(f){ if (!kd[nm][f] && sd[f]) kd[nm][f] = sd[f]; }); }
+          if (kd[nm]) { ['breed','gender','weight','neutered'].forEach(function(f){ if (!kd[nm][f] && sd[f]) kd[nm][f] = sd[f]; }); }
           else { (keep.dogs = keep.dogs || []).push(sd); kd[nm] = sd; }
         });
         keep.balance = (keep.balance || 0) + (d.balance || 0);
@@ -4570,7 +4570,7 @@ function mergeCloudData(cloudData) {
         var nm = (d.name||'').trim();
         if (seen[nm]) {
           var ex = seen[nm];
-          ['breed','gender','weight','birthday','neutered','id','zone'].forEach(function(k){ if (ex[k]===undefined||ex[k]===''||ex[k]===null) ex[k]=d[k]; });
+          ['breed','gender','weight','neutered','id','zone'].forEach(function(k){ if (ex[k]===undefined||ex[k]===''||ex[k]===null) ex[k]=d[k]; });
           changed = true;
         } else { seen[nm]=d; out.push(d); }
       });
@@ -4612,7 +4612,7 @@ function mergeCloudData(cloudData) {
             var nm = (sd && sd.name || '').trim(); if (!nm) return;
             var t = c.dogs.find(function(x){ return (x && x.name || '').trim() === nm; });
             if (t) {
-              ['breed','gender','weight','birthday','neutered','id','zone'].forEach(function(k){
+              ['breed','gender','weight','neutered','id','zone'].forEach(function(k){
                 if ((t[k] === undefined || t[k] === '' || t[k] === null) && sd[k] !== undefined && sd[k] !== null && sd[k] !== '') { t[k] = sd[k]; changed = true; }
               });
             }
@@ -4647,7 +4647,7 @@ function mergeCloudData(cloudData) {
         var nm = (d.name||'').trim();
         if (seen[nm]) {
           var ex = seen[nm];
-          ['breed','gender','weight','birthday','neutered','id','zone'].forEach(function(k){ if (ex[k]===undefined||ex[k]===''||ex[k]===null) ex[k]=d[k]; });
+          ['breed','gender','weight','neutered','id','zone'].forEach(function(k){ if (ex[k]===undefined||ex[k]===''||ex[k]===null) ex[k]=d[k]; });
           changed = true;
         } else { seen[nm]=d; out.push(d); }
       });
