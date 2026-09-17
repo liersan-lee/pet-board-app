@@ -2723,7 +2723,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260915.220';
+var APP_VERSION = '20260916.225';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -3290,11 +3290,12 @@ const STORAGE_KEY = 'petBoardingDB_v3';
 
 // ============ 云端同步后端配置（GitHub 版）============
 // 免费、额度慷慨（认证后 5000 次/小时），适合管理版/员工版多端实时同步。
-// v220 起：GITHUB_TOKEN 不再写死在 HTML 里（避免公开部署到 GitHub Pages 时被 Secret Scanning 拦截）。
-//    首次打开时由用户/管理员输入，存入浏览器 localStorage，后续自动使用。
-//    请使用「仅授权给 pet-board-data 私有仓库」的 GitHub Fine-grained Personal Access Token。
+// 老链接（app.workbuddy.host）专用：GITHUB_TOKEN 硬编码写死，员工打开即用、无需输入任何东西。
+// （GitHub Pages 公开部署才需要改成「手动输入 token」，本项目已确定保留老链接，故恢复写死方式。）
+// 若未来需要换 token，可在浏览器控制台 localStorage 存 petBoardingGitHubToken 覆盖；留空则回退到下面写死的值。
 var SYNC_BACKEND = 'github';
-var GITHUB_TOKEN = null; // 由 loadGitHubToken() 或用户输入赋值
+var GITHUB_TOKEN_DEFAULT = ''; // 公开 Pages 版：刻意不内置 token。员工首次打开会弹窗粘贴一次（存浏览器本地），避免把可写 token 暴露在公开网页源码里，保护 182 位客户隐私
+var GITHUB_TOKEN = GITHUB_TOKEN_DEFAULT; // 运行时副本；本地若存了自定义 token，会先验证再覆盖
 var GITHUB_REPO  = 'liersan-lee/pet-board-data';
 var GITHUB_PATH  = 'data/db.json';
 var GITHUB_BRANCH = 'main';
@@ -3309,12 +3310,33 @@ function ghApi(path) {
 
 // v220：token 从 localStorage 读取，避免写死在公开 HTML 里
 function loadGitHubToken() {
+  // 始终以硬编码永久 token 为默认值启动，避免员工手机本地缓存了旧/失效 token 导致一打开就报无权限
+  GITHUB_TOKEN = GITHUB_TOKEN_DEFAULT;
   try {
     var t = localStorage.getItem('petBoardingGitHubToken');
-    if (t && typeof t === 'string' && t.indexOf('github_pat_') === 0) { GITHUB_TOKEN = t; return true; }
+    if (t && typeof t === 'string' && t.indexOf('github_pat_') === 0 && t !== GITHUB_TOKEN_DEFAULT) {
+      // 本地 token 与默认值不同：先验证，再决定是否采用；验证失败则自动清除，避免反复报错
+      validateGitHubToken(t, function(ok){
+        if (ok) { GITHUB_TOKEN = t; }
+        else { try { localStorage.removeItem('petBoardingGitHubToken'); } catch(e){} }
+      });
+    }
   } catch(e) {}
-  GITHUB_TOKEN = null;
-  return false;
+  // 老链接：保留硬编码默认，绝不置空（否则员工刷新后无法同步）
+  return !!GITHUB_TOKEN;
+}
+function validateGitHubToken(token, cb) {
+  cb = cb || function(){};
+  var url = ghApi('/contents/' + GITHUB_PATH + '?ref=' + GITHUB_BRANCH);
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', url, true);
+  xhr.setRequestHeader('Authorization', 'token ' + token);
+  xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+  xhr.timeout = 10000;
+  xhr.onload = function(){ cb(xhr.status >= 200 && xhr.status < 300); };
+  xhr.onerror = function(){ cb(false); };
+  xhr.ontimeout = function(){ cb(false); };
+  try { xhr.send(); } catch(e){ cb(false); }
 }
 function saveGitHubToken(token) {
   token = (token || '').trim();
@@ -3353,6 +3375,15 @@ function confirmTokenPrompt() {
 function ensureGitHubToken(onReady) {
   if (hasGitHubToken()) { if (onReady) onReady(); return; }
   openTokenPrompt(onReady);
+}
+// 401（Token 失效/过期）时自动弹窗让用户输入新 Token，无需重发代码、无需联系开发。
+// 同一会话只弹一次，避免同步轮询持续 401 时反复弹窗；用户粘贴新 token 后立刻恢复同步。
+var __tokenPrompted = false;
+function promptTokenIfInvalid() {
+  if (__tokenPrompted) return;
+  __tokenPrompted = true;
+  showToast('⚠️ 需要 GitHub Token 才能同步云端，请粘贴（首次使用或令牌失效时都需粘贴一次，存浏览器本地）');
+  openTokenPrompt(function(){ __tokenPrompted = false; syncFromCloud(); if (typeof syncToCloud === 'function') syncToCloud(true); });
 }
 
 var lastSyncTime = 0;
@@ -3731,6 +3762,8 @@ function syncToCloud(force) {
           setSyncInd('✅ 已同步 ' + new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), '#4CAF50');
         } else if (err === 'http422' || err === 'conflict') {
           doPush(left - 1); // ref 冲突：重新拉取合并后再推（最多 3 次）
+        } else if (err === 'http401') {
+          promptTokenIfInvalid(); finishPush(); setSyncInd('⚠️ Token 已失效，请粘贴新 Token', '#E74C3C');
         } else {
           finishPush(); setSyncInd('⚠️ 同步失败 ' + err, '#FF9800');
         }
@@ -3807,6 +3840,7 @@ function githubFetchDB(cb) {
     }
     if (xhr.status === 401 || xhr.status === 403) {
       setSyncInd('⚠️ Token 无效/无权限', '#E74C3C');
+      if (xhr.status === 401) promptTokenIfInvalid();
       fail('Token 无效/无权限'); return;
     }
     if (xhr.status === 404) { if (cb) cb(null, null, null); return; } // 首次使用：云端还没有文件
@@ -3884,6 +3918,7 @@ function syncFromCloud(callback) {
     } else if (xhr.status === 401 || xhr.status === 403) {
       setSyncInd('⚠️ Token 无效/无权限', '#E74C3C');
       showToast('⚠️ GitHub Token 无效或无仓库权限');
+      if (xhr.status === 401) promptTokenIfInvalid();
     } else if (xhr.status === 404) {
       // 文件不存在：首次使用，本地数据会在后续自动上传
       markSynced();
@@ -4310,6 +4345,9 @@ function dedupeCustomersByPhone() {
       var keep = lst[0];
       for (var i = 1; i < lst.length; i++) {
         var d = lst[i];
+        // 仅当「手机号相同且身份证号也相同（都有效）」才合并；如两个同名「赵倩」手机同但身份证不同/缺失 → 视为不同人，不合并
+        var _kId = idCardKey(keep.idCard), _dId = idCardKey(d.idCard);
+        if (!(_kId && _dId && _kId === _dId)) continue;
         var kd = {}; (keep.dogs || []).forEach(function(x){ if (x && x.name) kd[(x.name || '').trim()] = x; });
         (d.dogs || []).forEach(function(sd){
           var nm = (sd.name || '').trim(); if (!nm) return;
@@ -5828,10 +5866,10 @@ function openRoomAction(roomId) {
     footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="setRoomMaintenance(\'' + roomId + '\')">🔧 设为维修</button>') + '<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\')">📋 预订此房</button>';
   } else if (room.status === 'booked') {
     body = renderOrderInfo(order, room, '已预订');
-    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>');
+    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button><button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
   } else if (room.status === 'occupied') {
     body = renderOrderInfo(order, room, '入住中');
-    footer = '<button class="btn btn-warning edit-only" onclick="openCheckout(\'' + order.id + '\')">💰 退房结算</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>');
+    footer = '<button class="btn btn-warning edit-only" onclick="openCheckout(\'' + order.id + '\')">💰 退房结算</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button><button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
   } else if (room.status === 'maintenance') {
     body = '<div class="alert alert-warning"><strong>🔧 维修中</strong></div>';
     footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-success" onclick="setRoomFree(\'' + roomId + '\')">✅ 设为空闲</button>');
@@ -5847,7 +5885,7 @@ function openRoomAction(roomId) {
       var _htag = _hl ? (' <span style="color:#E53935;font-weight:700">🔥' + _hl + '</span>') : '';
       var _bd = _hl ? '#EF9A9A' : '#BBDEFB', _bg = _hl ? '#FFF5F5' : '#F5FAFF';
       body += '<div style="border:1px solid ' + _bd + ';border-radius:8px;padding:8px 10px;margin-bottom:8px;background:' + _bg + '">'
-        + '<div style="font-size:13px"><b>' + formatDate(f.checkIn) + ' ~ ' + formatDate(f.checkOut||f.expectedCheckOut) + '</b> · ' + tl + _htag + '</div>'
+        + '<div style="font-size:13px"><b>' + fmtOrderDateTime(f) + '</b> · ' + tl + _htag + '</div>'
         + '<div style="font-size:13px">🐶 ' + escapeHtml(d) + ' · 👤 ' + escapeHtml(f.ownerName||'') + '</div></div>';
       if (APP_MODE !== 'view') footer += '<button class="btn btn-success btn-sm edit-only" onclick="closeModal(\'modalRoom\');checkIn(\'' + f.id + '\')">✅ 入住 ' + escapeHtml(d) + '</button>';
     });
@@ -5883,11 +5921,11 @@ function renderOrderInfo(order, room, label) {
   var _dn = getOrderDogNames(order);
   html += '<div><strong>狗名：</strong>🐶 ' + (_dn.length ? escapeHtml(_dn.join('、')) : '-') + (_dn.length>1 ? '（' + _dn.length + '只）' : '') + '</div><div><strong>品种：</strong>' + (order.breed||'-') + '</div>';
   html += '<div><strong>体重：</strong>' + (order.weight||'-') + 'kg</div><div><strong>日单价：</strong>¥' + price + '/天</div>';
-  html += '<div><strong>类型：</strong>' + typeLabel + ownLabel + '</div><div><strong>入住：</strong>' + formatDate(order.checkIn) + '</div>';
+  html += '<div><strong>类型：</strong>' + typeLabel + ownLabel + '</div><div><strong>入住：</strong>' + formatDate(order.checkIn) + (order.checkInTime ? ' ' + order.checkInTime : '') + '</div>';
   if (order.isLongTerm) {
     html += '<div><strong>退房：</strong>长期寄养</div><div><strong>已住：</strong>' + days + '天</div>';
   } else {
-    html += '<div><strong>预计退房：</strong>' + formatDate(order.checkOut||order.expectedCheckOut) + '</div><div><strong>天数：</strong>' + days + '天</div>';
+    html += '<div><strong>预计退房：</strong>' + formatDate(order.checkOut||order.expectedCheckOut) + (order.checkOutTime ? ' ' + order.checkOutTime : '') + '</div><div><strong>天数：</strong>' + days + '天</div>';
   }
   html += '</div>';
   if (order.orderType === 'training' && order.trainingItems) html += '<div class="alert alert-info"><strong>🎓 训练项目：</strong>' + order.trainingItems + '</div>';
@@ -6233,6 +6271,7 @@ function transferOrderToRoom(orderId, newRoomId, fromRoomId) {
 
 // ==================== 预订 ====================
 var editingOrderId = null; // 编辑订单模式标记（非空时 saveBooking 流程走更新分支）
+var reBookingRoom = null; // 再次预订模式标记（非空时 saveBooking 跳过占用守卫、存储精确时分并做时间冲突校验）
 
 // 实收金额的「已收基线」：编辑已有订单时 = 订单里已记录的 paidAmount，新建时 = 0。
 // 输入框的语义是【累计实收总额】（保存时整体覆盖），不是「本次再收多少」。
@@ -6292,7 +6331,7 @@ function onBookingRoomChange() {
   } catch (e) {}
 }
 
-function openNewBooking(roomId, includeRoomId) {
+function openNewBooking(roomId, includeRoomId, reBook) {
   editingOrderId = null;
   // includeRoomId：编辑订单时把"当前房间"也纳入可选（支持换房）；其余默认仅空闲房，
   // 但入住日期选在未来（如春节）时，占用房也可选（排下一位客户）。下拉由 refreshBookingRoomOptions 动态生成。
@@ -6304,7 +6343,8 @@ function openNewBooking(roomId, includeRoomId) {
     custHtml += '<option value="' + c.id + '">' + c.ownerName + ' · ' + c.phone + ' · 🐶' + dogsNames + '</option>';
   });
 
-  $('bookingBody').innerHTML = ''
+  var _rebookHead = (reBook ? '<div id="rebookScheduleWrap" style="margin-bottom:14px"></div>' : '');
+  $('bookingBody').innerHTML = _rebookHead
     + '<div class="form-row"><div class="form-group"><label>订单类型</label><select id="bkOrderType" onchange="toggleTrainingItems()"><option value="boarding">寄养</option><option value="training">训练</option><option value="diet">减肥训练营</option></select></div>'
     + '<div class="form-group"><label style="display:flex;align-items:center"><input type="checkbox" id="bkOwnDog" onchange="updateBookingFeeEstimate()" style="width:auto;margin-right:6px">🏠 自家狗（不计入入住率 · 房费¥0）</label></div></div>'
     + '<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><select id="bkRoom" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></select><span style="font-size:12px;color:var(--gray)">默认仅空闲房；入住日期选在未来（如春节）时，占用房也可选以排下一位客户</span></div>'
@@ -6324,6 +6364,7 @@ function openNewBooking(roomId, includeRoomId) {
     + '<div id="bkDogRows"></div>'
     + '<div class="form-row"><div class="form-group"><label>入住日期 <span class="required">*</span></label><input type="date" id="bkCheckIn" value="' + today() + '" onchange="updatePickupEstimate();updateBookingFeeEstimate();refreshBookingRoomOptions()"></div>'
     + '<div class="form-group" id="bkCheckOutGroup"><label>预计退房日期 <span class="required">*</span></label><input type="date" id="bkCheckOut" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></div></div>'
+    + '<div class="form-row" id="bkTimeRow" style="display:none"><div class="form-group"><label>🕐 入住时间</label><input type="time" id="bkCheckInTime" value="14:00"></div><div class="form-group"><label>🕐 退房时间</label><input type="time" id="bkCheckOutTime" value="12:00"></div></div>'
     + '<div class="form-group"><label style="display:flex;align-items:center"><input type="checkbox" id="bkLongTerm" onchange="toggleLongTerm()" style="width:auto;margin-right:6px">长期寄养（不填退房日期，退房时按实际天数结算）</label></div>'
     + '<div id="bkFeeEstimateWrap" style="background:#E8F5E9;border-left:3px solid #4CAF50;border-radius:8px;padding:10px 12px;margin-top:4px;font-size:14px;color:#1B5E20"><span id="bkFeeEstimate"></span></div>'
     + '<div class="form-group" id="bkRenewalGroup" style="display:none;background:#F7F0FF;border:1px solid #E1D5F5;border-radius:10px;padding:10px 12px;margin-top:4px">'
@@ -6353,10 +6394,34 @@ function openNewBooking(roomId, includeRoomId) {
   + '<div class="form-group" id="bkPaidGroup"><label id="bkPaidLabel">💰 实际支付金额（预付/定金）</label><input type="number" id="bkPaidAmount" placeholder="0" style="font-size:18px;font-weight:600;color:var(--success)" oninput="updatePaidAmountHint()" onchange="updatePaidAmountHint()"><div id="bkPaidHint" style="font-size:12px;color:var(--gray);margin-top:5px;line-height:1.6"></div></div>';
 
   if (roomId) { setTimeout(function(){ $('bkRoom').value = roomId; }, 50); }
+  if (reBook) {
+    reBookingRoom = roomId;
+    setTimeout(function(){
+      var tr = document.getElementById('bkTimeRow'); if (tr) tr.style.display = '';
+      // 默认入住日期：当前在住/已订 + 所有未来预订中「最晚退房日」的次日（链式排下一位，可连续排多次而不冲突）
+      var _all = [];
+      var _cur0 = getRoomOrder(DB.rooms[roomId]); if (_cur0) _all.push(_cur0);
+      (DB.bookings || []).forEach(function(b){ if (b.roomId === roomId) _all.push(b); });
+      (DB.orders || []).forEach(function(o){ if (o.roomId === roomId && o.status !== 'cancelled' && o.status !== 'checkedOut') _all.push(o); });
+      var def = today();
+      var _latest = null;
+      _all.forEach(function(x){
+        var dstr = x.checkOutDt ? x.checkOutDt.slice(0, 10) : (x.expectedCheckOut || x.checkOut || x.checkIn);
+        if (dstr && (!_latest || dstr > _latest)) _latest = dstr;
+      });
+      if (_latest) { var _cd = new Date(_latest); if (!isNaN(_cd.getTime())) { _cd.setDate(_cd.getDate() + 1); def = _cd.toISOString().slice(0, 10); } }
+      var ci = document.getElementById('bkCheckIn'); if (ci) ci.value = def;
+      var sel = document.getElementById('bkRoom'); if (sel) sel.value = roomId;
+      refreshBookingRoomOptions(); updateBookingFeeEstimate(); renderRebookSchedule();
+    }, 60);
+  } else {
+    reBookingRoom = null;
+  }
   // 新建订单：无历史收款，重置已收基线并挂上换房联动
   setPaidOriginal(0);
   var bkRoomSel = $('bkRoom');
   if (bkRoomSel) bkRoomSel.addEventListener('change', onBookingRoomChange);
+  if (bkRoomSel && reBookingRoom) bkRoomSel.addEventListener('change', function(){ renderRebookSchedule(); });
   // 自动记录录入员工（员工版=本机身份；管理版=默认首位员工，可改）
   var cbDisplay = document.getElementById('bkCreatedByDisplay');
   if (cbDisplay) {
@@ -7585,18 +7650,18 @@ function customerFingerprint(c) {
   return 'N:' + n + '||' + dogs;
 }
 
-// 查找重复客户：仅「手机号相同」或「身份证号相同」才视为同一人（忽略空值）。
-// 主人姓名、狗狗名字刻意不作为依据——重名太常见（两个「金」、两只「多多」），
-// 按名字合并会把两个不同的人并成一条档案。excludeId 用于排除正在编辑的自己。
+// 查找重复客户（用户2026-09-16明确要求）：必须「手机号有效且相同」且「身份证号有效且相同」
+// 才视为同一人，二者缺一不可。重名（如两个「赵倩」）、单凭手机号或单凭身份证都不得合并，
+// 否则会把两个不同的人并成一条档案。excludeId 用于排除正在编辑的自己。
 function findDuplicateCustomer(phone, idCard, excludeId) {
   DB.customers = DB.customers || [];
   var p = phoneKey(phone);
   var ic = idCardKey(idCard);
+  if (!p || !ic) return null; // 任一缺失（手机号/身份证未填或无效）→ 不视为重复，绝不合并
   for (var i = 0; i < DB.customers.length; i++) {
     var c = DB.customers[i];
     if (excludeId && c.id === excludeId) continue;
-    if (p && customerPhoneKeys(c).indexOf(p) >= 0) return c;
-    if (ic && idCardKey(c.idCard) === ic) return c;
+    if (customerPhoneKeys(c).indexOf(p) >= 0 && idCardKey(c.idCard) === ic) return c;
   }
   return null;
 }
@@ -7665,6 +7730,109 @@ function bookingCustomerComplete(owner, phone, dogs) {
   return true;
 }
 
+// ==================== 再次预订：精确时分 + 时间冲突校验 ====================
+// 解析 "YYYY-MM-DDTHH:MM" 或纯 "YYYY-MM-DD" 为分钟级时间戳（无效返回 null）
+function parseDt(s) {
+  if (!s) return null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(s);
+  if (m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]).getTime();
+  var m2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m2) return new Date(+m2[1], +m2[2]-1, +m2[3], 0, 0).getTime();
+  return null;
+}
+// 取订单/预订的时间区间端点（带 checkInDt/checkOutDt 用精确时间；否则按整天 00:00~23:59）
+function orderInterval(o) {
+  if (!o || !o.checkIn) return null;
+  var s = parseDt(o.checkInDt || (o.checkIn + 'T' + (o.checkInTime || '00:00')));
+  var e = parseDt(o.checkOutDt || ((o.expectedCheckOut || o.checkOut || o.checkIn) + 'T' + (o.checkOutTime || '23:59')));
+  if (!s || !e) return null;
+  return { s: s, e: e, o: o };
+}
+// 房间时间区间冲突检测：返回与 [startDt, endDt] 重叠（端点相切不算冲突）的已有订单/预订。
+// reBook 模式用来避免把下一位住户排到和已有住户/预订打架的时间。excludeId 排除自己（编辑时）。
+function findBookingConflict(roomId, startDt, endDt, excludeId) {
+  var s = parseDt(startDt), e = parseDt(endDt);
+  if (!s || !e) return null;
+  var list = (DB.orders || []).filter(function(o) {
+    return o.roomId === roomId && o.id !== excludeId && o.status !== 'cancelled' && o.status !== 'checkedOut';
+  });
+  for (var i = 0; i < list.length; i++) {
+    var iv = orderInterval(list[i]);
+    if (!iv) continue;
+    if (s < iv.e && e > iv.s) return list[i]; // 重叠且未相切
+  }
+  var bks = (DB.bookings || []).filter(function(b) { return b.roomId === roomId && b.id !== excludeId; });
+  for (var j = 0; j < bks.length; j++) {
+    if (bks[j].checkInDt && bks[j].checkOutDt) {
+      var bs = parseDt(bks[j].checkInDt), be = parseDt(bks[j].checkOutDt);
+      if (bs && be && s < be && e > bs) return bks[j];
+    }
+  }
+  return null;
+}
+// 房态展示用：把订单的入住~退房区间格式化为「MM-DD HH:MM」或「MM-DD」（无精确时间时）
+function fmtOrderDateTime(o) {
+  if (!o) return '';
+  function pretty(s) {
+    if (!s) return '';
+    var m = /^(\d{4})-(\d{2})-(\d{2})(T(\d{2}):(\d{2}))?$/.exec(s);
+    if (!m) return s;
+    return m[2] + '-' + m[3] + (m[4] ? (' ' + m[4] + ':' + m[5]) : '');
+  }
+  var ci = o.checkInDt ? o.checkInDt.slice(0, 16) : o.checkIn;
+  var co = o.checkOutDt ? o.checkOutDt.slice(0, 16) : (o.expectedCheckOut || o.checkOut);
+  return pretty(ci) + ' ~ ' + pretty(co);
+}
+
+// 再次预订：房间排期可视化（在住 / 已预订 分色展示，帮助员工安排腾房）
+function renderRebookSchedule() {
+  var wrap = document.getElementById('rebookScheduleWrap');
+  if (!wrap) return;
+  var roomId = (document.getElementById('bkRoom') || {}).value;
+  if (!roomId || !reBookingRoom) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+  wrap.style.display = '';
+  var room = DB.rooms[roomId]; if (!room) { wrap.innerHTML = ''; return; }
+  function fullPeriod(o) {
+    function p(s){ if(!s) return '—'; var m=/^(\d{4})-(\d{2})-(\d{2})(T(\d{2}):(\d{2}))?$/.exec(s); if(!m) return s; return m[1]+'-'+m[2]+'-'+m[3]+(m[4]?(' '+m[4]+':'+m[5]):''); }
+    var ci = o.checkInDt ? o.checkInDt.slice(0,16) : o.checkIn;
+    var co = o.checkOutDt ? o.checkOutDt.slice(0,16) : (o.expectedCheckOut||o.checkOut);
+    return p(ci) + ' ~ ' + p(co);
+  }
+  var items = [];
+  var cur = getRoomOrder(room);
+  if (cur) items.push({ type:'current', o: cur });
+  getRoomFutureBookings(roomId).forEach(function(o){ if (!cur || o.id !== cur.id) items.push({ type:'future', o:o }); });
+  items.sort(function(a,b){ return (a.o.checkIn||'').localeCompare(b.o.checkIn||''); });
+  var html = '<div style="border:1px solid #E0E0E0;border-radius:10px;overflow:hidden">';
+  html += '<div style="background:#37474F;color:#fff;padding:8px 12px;font-weight:700">📅 ' + escapeHtml(roomId) + ' 房间排期（再次预订前先看清楚）</div>';
+  if (!items.length) {
+    html += '<div style="padding:12px;color:#666">✅ 该房暂无在住 / 预订记录，可直接安排新住户</div>';
+  }
+  var latestEnd = null;
+  items.forEach(function(it){
+    var o = it.o;
+    var dn = getOrderDogNames(o).join('、');
+    var tl = o.orderType === 'training' ? '🎓训练' : (o.orderType === 'diet' ? '🥗减肥营' : '寄养');
+    var isCur = it.type === 'current';
+    var bg = isCur ? '#FFF3E0' : '#E3F2FD';
+    var bd = isCur ? '#FB8C00' : '#1E88E5';
+    var tag = isCur ? '🟧 在住' : '🟦 预订';
+    var period = fullPeriod(o);
+    var extra = '';
+    if (isCur && (!o.actualCheckOut && !o.expectedCheckOut && !o.checkOut)) { extra = ' · <b style="color:#E53935">未退房</b>'; }
+    html += '<div style="border-left:5px solid '+bd+';background:'+bg+';padding:8px 12px">'
+      + '<div style="font-weight:700">'+tag+' · 🐶 '+escapeHtml(dn)+'（'+tl+'）</div>'
+      + '<div style="font-size:13px;color:#444;margin-top:2px">👤 '+escapeHtml(o.ownerName||'')+' · 📅 '+escapeHtml(period)+extra+'</div>'
+      + '</div>';
+    var e = o.checkOutDt || (o.expectedCheckOut||o.checkOut);
+    if (e) { var t = (o.checkOutDt ? o.checkOutDt : e); if (!latestEnd || t > latestEnd) latestEnd = t; }
+  });
+  html += '<div style="background:#E8F5E9;border-top:1px solid #C8E6C9;padding:8px 12px;font-size:13px;color:#1B5E20">'
+    + '✅ 本次新住户建议入住在 <b>' + (latestEnd ? escapeHtml((latestEnd.slice(0,16).replace('T',' '))) + ' 之后' : '任意日期') + '</b>，系统会自动校验时间不冲突</div>';
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
 function saveBooking(draft) {
   var roomId = $('bkRoom').value;
   var owner = $('bkOwner').value.trim();
@@ -7691,10 +7859,24 @@ function saveBooking(draft) {
     if (!checkOut) { showToast('请选择退房日期或勾选长期寄养'); return; }
     if (new Date(checkOut) <= new Date(checkIn)) { showToast('退房需晚于入住'); return; }
   }
+  // 再次预订：精确到几点几分 + 时间冲突校验（端点相切不算冲突，可无缝排下一位）
+  var checkInTime = '', checkOutTime = '', checkInDt = '', checkOutDt = '';
+  if (reBookingRoom) {
+    checkInTime = ($('bkCheckInTime') ? $('bkCheckInTime').value : '') || '14:00';
+    checkOutTime = ($('bkCheckOutTime') ? $('bkCheckOutTime').value : '') || '12:00';
+    if (!checkInTime || !checkOutTime) { showToast('请填写入住与退房时间'); return; }
+    checkInDt = checkIn + 'T' + checkInTime;
+    checkOutDt = checkOut + 'T' + checkOutTime;
+    var _conf = findBookingConflict(roomId, checkInDt, checkOutDt, editingOrderId);
+    if (_conf) {
+      var _ct = fmtOrderDateTime(_conf);
+      showToast('⚠️ 时间冲突：该房间 ' + (_ct || '已有占用') + ' 已被占用，请调整入住/退房时间，避免和已有住户或预订打架'); return;
+    }
+  }
   var room = DB.rooms[roomId];
   var _future = !isLongTerm && checkIn && (new Date(checkIn) > new Date(today()));
   // 暂存 或 预订未来日期（如春节）：允许在“已入住/已预订”的房间上排下一位客户，不抢当前占用
-  if (!draft && !_future && room.status !== 'free') {
+  if (!draft && !_future && !reBookingRoom && room.status !== 'free') {
     showToast('该房间当前已被占用；若要预订春节等未来日期，请把「入住日期」选到未来，或先用「⏳ 暂存」'); return;
   }
   var breed = dogs[0].breed || '';
@@ -7722,6 +7904,7 @@ function saveBooking(draft) {
     privacyRefused: privacyRefusedChecked(),
     ownerName: owner, phone: phone, idCard: idCard, dogName: dogName, dogNames: dogs.map(function(d){return d.name;}).join('、'), breed: breed, weight: weight, gender: gender, birthday: birthday,
     checkIn: checkIn, expectedCheckOut: checkOut, checkOut: null, actualCheckIn: null, status: 'booked', draft: !!draft,
+    checkInTime: checkInTime, checkOutTime: checkOutTime, checkInDt: checkInDt, checkOutDt: checkOutDt,
     notes: _notesText, createdAt: now(), updatedAt: now(), roomChangedAt: now(), days: 0, roomFee: 0, extraFee: 0, extraFeeDesc: '', totalFee: 0, paidAmount: (parseFloat($('bkPaidAmount').value)||0),
     orderType: $('bkOrderType').value, isOwnDog: $('bkOwnDog').checked, isLongTerm: isLongTerm,
     renewalCycle: (isLongTerm ? ($('bkRenewalCycle').value || '') : ''),
@@ -7777,6 +7960,7 @@ function saveBooking(draft) {
   var _ac = archiveCustomerFromOrder(order, dogs, linkCust, false);
   if (_ac) order.customerId = _ac.id;
   saveDB();
+  reBookingRoom = null; // 重置再次预订标记（无论保存成功与否，避免泄漏到下次普通预订）
   closeModal('modalBooking');
   renderRoomBoard(); renderOrders();
   if (typeof renderCustomers === 'function') renderCustomers();
@@ -11475,82 +11659,28 @@ function restoreCustomer(id) {
 // 主人名相同但狗不同、或狗名相同但主人不同 —— 只标记为「疑似」，绝不自动合并。
 function scanDuplicateCustomers() {
   DB.customers = DB.customers || [];
-  var groups = [], used = {};
-  // 一个客户的所有联系方式（主号 + 其他联系电话）都作为分桶键，
-  // 这样「主号不同但副号相同」的两位也能被正确判为同一人。
-  function keysOf(c) {
-    var out = [];
-    customerPhoneKeys(c).forEach(function(k){ out.push({ k: 'P:' + k, reason: '手机号相同', mt: 'phone' }); });
+  var groups = [];
+  // 合并判据（用户2026-09-16明确要求）：仅当「手机号有效且相同」且「身份证号有效且相同」才视为同一人。
+  // 不再按姓名合并（重名太常见，如两个「赵倩」会被误并）；也不再单凭手机号或单凭身份证合并。
+  // 两个维度缺其一的客户不参与自动合并，保留为独立档案（即便同名也不并）。
+  function keyOf(c) {
+    var p = phoneKey(c.phone);
     var ic = idCardKey(c.idCard);
-    if (ic) out.push({ k: 'I:' + ic, reason: '身份证相同', mt: 'id' });
-    var n = String(c.ownerName || '').trim();
-    // 合并规则（与用户确认的三条一致）：
-    // ① 主人姓名相同 → 合并（只按姓名分桶，不再把狗名塞进键里，否则「同名但狗不同」的真实客户并不上）
-    // ② 无主人姓名（只有狗狗名）的纯占位记录 → 不建立姓名分桶，绝不合并（避免 Boogie/丢丢 这类无主狗被并）
-    // ③ 仅狗名相同、主人名不同 → 不同分桶，不合并
-    // 仅「有真实主人姓名」才按姓名合并；「未知名客户」这种占位名不视为姓名。
-    if (n && n !== '未知名客户') {
-      out.push({ k: 'N:' + n, reason: '主人姓名相同', mt: 'name' });
-    }
-    return out;
+    if (p && ic) return 'K:' + p + '|' + ic; // 必须手机+身份证都有效且存在才进入同桶
+    return null;
   }
   var bucket = {};
   DB.customers.forEach(function(c) {
-    keysOf(c).forEach(function(k) {
-      (bucket[k.k] = bucket[k.k] || { reason: k.reason, mt: k.mt, list: [] }).list.push(c);
-    });
+    var k = keyOf(c);
+    if (!k) return;
+    (bucket[k] = bucket[k] || { reason: '手机号与身份证号均相同', mt: 'both', list: [] }).list.push(c);
   });
   Object.keys(bucket).forEach(function(k) {
     var arr = bucket[k].list;
     if (arr.length < 2) return;
-    // 名字桶额外安检：同名的人里，若两人都有有效手机号但互不相同，或都有身份证但互不相同，
-    // 直接视为不同人。为了不误伤桶内其它真正同人的记录，按「手机号/身份证相连」拆成
-    // 连通分量，只有连通分量内 >=2 条才作为重复组提示。
-    if (bucket[k].mt === 'name') {
-      var comps = [];
-      (function splitComponents() {
-        var remain = arr.slice();
-        var visited = {};
-        function linked(a, b) {
-          var pa = customerPhoneKeys(a), pb = customerPhoneKeys(b);
-          if (pa.length && pb.length && pa.some(function(x) { return pb.indexOf(x) >= 0; })) return true;
-          var ia = idCardKey(a.idCard), ib = idCardKey(b.idCard);
-          return ia && ib && ia === ib;
-        }
-        function walk(seed, comp) {
-          comp.push(seed);
-          visited[seed.id] = true;
-          remain.forEach(function(x) {
-            if (visited[x.id] || x === seed) return;
-            if (linked(seed, x)) walk(x, comp);
-          });
-        }
-        remain.forEach(function(x) {
-          if (visited[x.id]) return;
-          var comp = [];
-          walk(x, comp);
-          if (comp.length >= 2) comps.push(comp);
-        });
-      })();
-      comps.forEach(function(comp) {
-        comp.sort(function(a, b) {
-          var sa = (a.phone ? 2 : 0) + (a.idCard ? 1 : 0) + (a.balance > 0 ? 4 : 0) + ((a.dogs || []).length ? 1 : 0);
-          var sb = (b.phone ? 2 : 0) + (b.idCard ? 1 : 0) + (b.balance > 0 ? 4 : 0) + ((b.dogs || []).length ? 1 : 0);
-          if (sa !== sb) return sb - sa;
-          return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
-        });
-        groups.push({
-          key: k, reason: bucket[k].reason, matchType: bucket[k].mt, keepId: comp[0].id,
-          dupIds: comp.slice(1).map(function(x) { return x.id; }),
-          name: comp[0].ownerName || '未命名'
-        });
-      });
-      return;
-    }
-    // 保留信息最全、创建最早的一条
     arr.sort(function(a, b) {
-      var sa = (a.phone ? 2 : 0) + (a.idCard ? 1 : 0) + (a.balance > 0 ? 4 : 0) + ((a.dogs || []).length ? 1 : 0);
-      var sb = (b.phone ? 2 : 0) + (b.idCard ? 1 : 0) + (b.balance > 0 ? 4 : 0) + ((b.dogs || []).length ? 1 : 0);
+      var sa = (a.balance > 0 ? 4 : 0) + ((a.dogs || []).length ? 1 : 0);
+      var sb = (b.balance > 0 ? 4 : 0) + ((b.dogs || []).length ? 1 : 0);
       if (sa !== sb) return sb - sa;
       return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
     });
@@ -11573,24 +11703,16 @@ function mergeDuplicateCustomers(scan) {
     g.dupIds.forEach(function(did) {
       var dup = DB.customers.find(function(x) { return x.id === did; });
       if (!dup || dup === keep) return;
+      // 二次防御（用户2026-09-16要求）：仅当「手机号有效且相同」且「身份证有效且相同」才合并，
+      // 即便扫描误分桶也兜底不误并，杜绝把两个不同人并成一条档案（如两个同名「赵倩」）。
+      var _kp = phoneKey(keep.phone), _dp = phoneKey(dup.phone);
+      var _ki = idCardKey(keep.idCard), _di = idCardKey(dup.idCard);
+      if (!(_kp && _dp && _kp === _dp && _ki && _di && _ki === _di)) return;
       // 铁律（用户明确要求：未知名客户不合并到同一人名下）：无主占位档案（未知名客户等）
       // 绝不参与「按姓名/手机/身份证」的合并，即便扫描误把它们分进同一组也直接跳过，保留两条独立占位。
       if (isJunkCustomer(keep) || isJunkCustomer(dup)) return;
       // 已被本轮其他分组合并并立了墓碑的，跳过，避免同一客户被重复合并两次
       if (DB.tombstones['customers:' + did]) return;
-      // 安全闸：仅「同名」分桶（无手机号/身份证强匹配）时，若双方手机号或身份证冲突，
-      // 视为不同人，不合并、也不删除，避免把两个真·同名不同人并成一条档案。
-      // （真正同名同人的，往往手机号/身份证也一致，会走 phone/id 强匹配分桶，不受此限制。）
-      if (g.matchType === 'name') {
-        var kPhones = customerPhoneKeys(keep), dPhones = customerPhoneKeys(dup);
-        var phoneClash = kPhones.length && dPhones.length && !kPhones.some(function(x) { return dPhones.indexOf(x) >= 0; });
-        var kId = idCardKey(keep.idCard), dId = idCardKey(dup.idCard);
-        var idClash = kId && dId && kId !== dId;
-        if (phoneClash || idClash) {
-          // 同名但身份证/手机号明显不同 → 判定为不同人，跳过（保留两条独立档案）
-          return;
-        }
-      }
       // 钱和记录必须跟着走：余额、充值记录、到店次数、首次/最近到访都要并入保留方
       keep.balance = (typeof keep.balance === 'number' ? keep.balance : 0) + (typeof dup.balance === 'number' ? dup.balance : 0);
       keep.recharges = (keep.recharges || []).concat(dup.recharges || []);
@@ -12604,7 +12726,9 @@ function importData(event) {
       showConfirm('导入数据', '确定导入？将覆盖当前数据。', function() {
         DB = data;
         DB.rooms=DB.rooms||{};DB.orders=DB.orders||[];DB.foodBrands=DB.foodBrands||[];DB.foodRecords=DB.foodRecords||[];DB.prices=DB.prices||{};DB.roomPrices=DB.roomPrices||{};DB.history=DB.history||[];DB.customers=DB.customers||[];DB.supplies=DB.supplies||[];DB.supplyRecords=DB.supplyRecords||[];
-        initRooms(); initDefaultPrices(); initHolidayPrices(); saveDB(); renderSettings(); showToast('导入成功');
+        initRooms(); initDefaultPrices(); initHolidayPrices(); saveDB();
+        if (typeof syncToCloud === 'function') syncToCloud(true); // 导入备份后立即推送到云端，避免本地新数据被同步覆盖丢失
+        renderSettings(); showToast('导入成功，已同步云端');
       });
     } catch(err) { showToast('文件格式错误'); }
   };
