@@ -3294,7 +3294,7 @@ const STORAGE_KEY = 'petBoardingDB_v3';
 // （GitHub Pages 公开部署才需要改成「手动输入 token」，本项目已确定保留老链接，故恢复写死方式。）
 // 若未来需要换 token，可在浏览器控制台 localStorage 存 petBoardingGitHubToken 覆盖；留空则回退到下面写死的值。
 var SYNC_BACKEND = 'github';
-var GITHUB_TOKEN_DEFAULT = ''; // 公开版不内置 token（安全）：员工首次打开粘贴一次，存浏览器本地；本地 app_root.html 仍保留 token
+var GITHUB_TOKEN_DEFAULT = ''; // 公开 Pages 版不内置 token（GitHub 密钥保护会拒绝含 token 的公开文件）；首次打开由员工粘贴一次，存浏览器本地
 var GITHUB_TOKEN = GITHUB_TOKEN_DEFAULT; // 运行时副本；本地若存了自定义 token，会先验证再覆盖
 var GITHUB_REPO  = 'liersan-lee/pet-board-data';
 var GITHUB_PATH  = 'data/db.json';
@@ -4522,11 +4522,27 @@ function mergeCloudData(cloudData) {
           if(!((tgt.gender||'').trim()) && (sd.gender||'').trim()) { tgt.gender=sd.gender; changed=true; }
           // ⚠️ 生日不在此做「对侧回填」：生日唯一权威在客户档案，员工清空后若云端残留旧值又填回
           // 会造成「清空秒弹回」。新建客户时已由 mergeDogs([], dogs) 从订单带入生日，此处不再反向补。
-          if(!tgt.neutered && sd.neutered) { tgt.neutered=sd.neutered; changed=true; }
+            if(!tgt.neutered && sd.neutered) { tgt.neutered=sd.neutered; changed=true; }
+          });
         });
+        // 删除黑名单跨设备持久化：本地或云端任一方删过的狗，合并后都不得复活。
+        // 关键：mergeArray 在「云端较新」时会整条覆盖本地客户，把本地的 deletedDogs 一起丢掉，
+        // 导致「删了阿布又跳回来」。这里把本地+云端的 deletedDogs 取并集，强制过滤掉已删的狗，
+        // 并把并集写回合并结果，保证下次同步时黑名单也跟着走。
+        var _bans = [];
+        [_lMap[c.id], _cMap[c.id], c].forEach(function(src){
+          if(src && src.deletedDogs) expandDeletedDogNames(src.deletedDogs).forEach(function(x){ if(_bans.indexOf(x)<0) _bans.push(x); });
+        });
+        if(_bans.length){
+          var _cur = (c.deletedDogs||[]).slice();
+          _bans.forEach(function(x){ if(_cur.indexOf(x)<0) _cur.push(x); });
+          c.deletedDogs = _cur;
+          var _blen = (c.dogs||[]).length;
+          c.dogs = (c.dogs||[]).filter(function(d){ return _bans.indexOf(((d&&d.name||'').trim())<0); });
+          if(c.dogs.length!==_blen) changed=true;
+        }
       });
-    });
-  })();
+    })();
   // 方案B 兜底：云端拉回来的客户，若其「删除指纹(custBans)」命中（含按订单来源号 O:），一律剔除。
   // 即便云端副本因同步时序缺失墓碑，也绝不让已删除的占位/客户复活。
   (function(){
