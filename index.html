@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.233';
+var APP_VERSION = '20260918.234';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -4554,7 +4554,7 @@ function mergeCloudData(cloudData) {
           _bans.forEach(function(x){ if(_cur.indexOf(x)<0) _cur.push(x); });
           c.deletedDogs = _cur;
           var _blen = (c.dogs||[]).length;
-          c.dogs = (c.dogs||[]).filter(function(d){ return _bans.indexOf(((d&&d.name||'').trim())<0); });
+          c.dogs = (c.dogs||[]).filter(function(d){ return _bans.indexOf(((d&&d.name)||'').trim()) < 0; });
           if(c.dogs.length!==_blen) changed=true;
         }
       });
