@@ -2723,7 +2723,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260917.226';
+var APP_VERSION = '20260917.228';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -3294,7 +3294,7 @@ const STORAGE_KEY = 'petBoardingDB_v3';
 // （GitHub Pages 公开部署才需要改成「手动输入 token」，本项目已确定保留老链接，故恢复写死方式。）
 // 若未来需要换 token，可在浏览器控制台 localStorage 存 petBoardingGitHubToken 覆盖；留空则回退到下面写死的值。
 var SYNC_BACKEND = 'github';
-var GITHUB_TOKEN_DEFAULT = ''; // 公开 Pages 版：刻意不内置 token。员工首次打开会弹窗粘贴一次（存浏览器本地），避免把可写 token 暴露在公开网页源码里，保护 182 位客户隐私
+var GITHUB_TOKEN_DEFAULT = ''; // 公开版不内置 token（安全）：员工首次打开粘贴一次，存浏览器本地；本地 app_root.html 仍保留 token
 var GITHUB_TOKEN = GITHUB_TOKEN_DEFAULT; // 运行时副本；本地若存了自定义 token，会先验证再覆盖
 var GITHUB_REPO  = 'liersan-lee/pet-board-data';
 var GITHUB_PATH  = 'data/db.json';
@@ -4520,7 +4520,8 @@ function mergeCloudData(cloudData) {
           if(!((tgt.breed||'').trim()) && (sd.breed||'').trim()) { tgt.breed=sd.breed; changed=true; }
           if(!((tgt.weight||'').trim()) && (sd.weight||'').trim()) { tgt.weight=sd.weight; changed=true; }
           if(!((tgt.gender||'').trim()) && (sd.gender||'').trim()) { tgt.gender=sd.gender; changed=true; }
-          if(!((tgt.birthday||'').trim()) && (sd.birthday||'').trim()) { tgt.birthday=sd.birthday; changed=true; }
+          // ⚠️ 生日不在此做「对侧回填」：生日唯一权威在客户档案，员工清空后若云端残留旧值又填回
+          // 会造成「清空秒弹回」。新建客户时已由 mergeDogs([], dogs) 从订单带入生日，此处不再反向补。
           if(!tgt.neutered && sd.neutered) { tgt.neutered=sd.neutered; changed=true; }
         });
       });
@@ -5543,6 +5544,14 @@ function getHolidayLabel(dateStr) {
 // 重建房态下拉：默认仅空闲房；当入住日期选在未来（如春节）时，也允许选择当前被占用的房间排下一位客户。
 function refreshBookingRoomOptions(includeRoomId) {
   var sel = document.getElementById('bkRoom'); if (!sel) return;
+  // 再次预订模式：房间锁定在当前房，禁止切换到其他房间（用户明确要求）
+  if (reBookingRoom && DB.rooms[reBookingRoom]) {
+    sel.innerHTML = '<option value="' + reBookingRoom + '">' + roomDisplayName(reBookingRoom) + '（已锁定 · 再次预订）</option>';
+    sel.value = reBookingRoom;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
   var ci = (document.getElementById('bkCheckIn') || {}).value || '';
   var isFuture = !!ci && (new Date(ci) > new Date(today()));
   var rooms = Object.values(DB.rooms || {}).filter(function(r){
@@ -5861,15 +5870,17 @@ function openRoomAction(roomId) {
   var order = getRoomOrder(room); var price = getRoomPrice(room);
   $('modalRoomTitle').textContent = room.id + ' · ' + room.label;
   var body = '', footer = '';
+  // 再次预订按钮（再次预订 = 给当前房排未来时段的下一个住户，房间锁定不跳房）
+  var rebookBtn = (APP_MODE==='view'?'':'<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
   if (room.status === 'free') {
     body = '<div class="alert alert-success"><strong>✅ 房间空闲</strong></div><div style="margin:16px 0"><div style="margin-bottom:8px"><strong>房间号：</strong>' + room.id + '</div><div style="margin-bottom:8px"><strong>区域：</strong>' + room.label + '</div><div style="margin-bottom:8px"><strong>日单价：</strong>¥' + price + '/天</div></div>';
-    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="setRoomMaintenance(\'' + roomId + '\')">🔧 设为维修</button>') + '<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\')">📋 预订此房</button>';
+    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="setRoomMaintenance(\'' + roomId + '\')">🔧 设为维修</button>') + '<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\')">📋 预订此房</button>' + ((APP_MODE==='view' || !getRoomFutureBookings(roomId).length) ? '' : rebookBtn);
   } else if (room.status === 'booked') {
     body = renderOrderInfo(order, room, '已预订');
-    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button><button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
+    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>' + rebookBtn);
   } else if (room.status === 'occupied') {
     body = renderOrderInfo(order, room, '入住中');
-    footer = '<button class="btn btn-warning edit-only" onclick="openCheckout(\'' + order.id + '\')">💰 退房结算</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button><button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
+    footer = '<button class="btn btn-warning edit-only" onclick="openCheckout(\'' + order.id + '\')">💰 退房结算</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>' + rebookBtn);
   } else if (room.status === 'maintenance') {
     body = '<div class="alert alert-warning"><strong>🔧 维修中</strong></div>';
     footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-success" onclick="setRoomFree(\'' + roomId + '\')">✅ 设为空闲</button>');
@@ -7588,7 +7599,9 @@ function mergeDogs(localDogs, newDogs, deletedNames) {
         if (carry && nd.weight) ex.weight = nd.weight;
         if (carry && nd.gender) ex.gender = nd.gender;
         if (carry) ex.neutered = !!nd.neutered;
-        if (carry && nd.birthday) ex.birthday = nd.birthday;
+        // ⚠️ 故意不反向覆盖生日：生日唯一权威在客户档案，订单/云端旧生日不得写回档案，
+        // 否则员工清空档案生日后，下次云同步又会把旧生日灌回来（「清空秒弹回」bug）。
+        // 新狗首次从订单建立时已在下方 else 分支拿到生日，无需此处回填。
       } else {
         arr.push({ id: (arr.length === 0 ? (nd.id || '') : '') || genId(), name: nm,
           breed: carry ? (nd.breed || '') : '', weight: carry ? (nd.weight || '') : '',
