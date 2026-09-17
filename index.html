@@ -230,6 +230,22 @@ table tr:hover td{background:var(--gray-lighter)}
 .birthday-card .dog-avatar{font-size:36px}
 .birthday-card .info .name{font-size:16px;font-weight:700}
 .birthday-card .info .detail{font-size:13px;opacity:.9}
+/* 生日提醒：按狗狗分条、可展开看明细的手风琴 */
+.bday-item{background:linear-gradient(135deg,#FFF3F0,#FFE9E0);border:1px solid #FFD2C2;border-radius:var(--radius);margin-bottom:10px;overflow:hidden}
+.bday-item>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;gap:12px;user-select:none}
+.bday-item>summary::-webkit-details-marker{display:none}
+.bday-item>summary .bday-avatar{font-size:30px}
+.bday-item>summary .bday-main{flex:1;min-width:0}
+.bday-item>summary .bday-dog{font-size:16px;font-weight:700;color:#C0392B}
+.bday-item>summary .bday-breed{font-size:12px;color:var(--gray);margin-left:6px}
+.bday-item>summary .bday-when{font-size:13px;font-weight:700;color:#E65100;white-space:nowrap}
+.bday-item.is-today>summary{background:linear-gradient(135deg,#FF6B6B,#FF8E53);color:#fff}
+.bday-item.is-today>summary .bday-dog{color:#fff}
+.bday-item.is-today>summary .bday-breed,.bday-item.is-today>summary .bday-when{color:#fff}
+.bday-detail-body{padding:4px 14px 14px 56px;font-size:13px;color:#5D4037;line-height:1.7}
+.bday-detail-body .bday-row{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:center}
+.bday-detail-body .bday-k{color:var(--gray)}
+.bday-detail-body .btn{margin-top:8px}
 .customer-card{background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:12px;display:flex;gap:16px;align-items:center}
 .customer-card .avatar{font-size:36px;width:50px;height:50px;display:flex;align-items:center;justify-content:center;background:var(--gray-light);border-radius:50%}
 .customer-card .info{flex:1}
@@ -2723,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.232';
+var APP_VERSION = '20260918.233';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -2831,7 +2847,7 @@ if (APP_MODE === 'view') {
     <div style="height:30px" data-page-node-id="Q0HVHSFhh35e1C2KwoD0nw"></div>
   </div>
   <div class="card" data-page-node-id="zJCYC2HeHRcpxtK3K744Pc">
-    <div class="card-title" data-page-node-id="ce9sQd3T9ru5LIemiPlY8B"><span class="left" data-page-node-id="lw50FO4FUithLOY5mY70cR">🎂 近期狗狗生日提醒</span></div>
+    <div class="card-title" data-page-node-id="ce9sQd3T9ru5LIemiPlY8B"><span class="left" id="birthdayAlertsTitle" data-page-node-id="lw50FO4FUithLOY5mY70cR">🎂 近期狗狗生日提醒</span></div>
     <div id="birthdayAlerts" data-page-node-id="JqYJaOPAqTGtmGQfJbauWT"></div>
   </div>
   <div class="card" data-page-node-id="hZmtvJ1tfxXdPV2KbUkxFD">
@@ -9880,14 +9896,34 @@ function renderBirthdayAlerts() {
     });
   });
   upcoming.sort(function(a,b){return a.daysToBday - b.daysToBday;});
+  var _bt = $('birthdayAlertsTitle');
   if (upcoming.length === 0) {
+    if (_bt) _bt.textContent = '🎂 近期狗狗生日提醒';
     $('birthdayAlerts').innerHTML = '<div class="empty-state"><div class="icon">🎂</div><div class="text">暂无近期生日提醒。请在客户档案中填写狗狗生日获取提醒。</div></div>';
     return;
   }
+  if (_bt) _bt.textContent = '🎂 近期狗狗生日提醒（' + upcoming.length + ' 只狗狗）';
   var html = '';
   upcoming.forEach(function(u) {
-    var btxt = u.daysToBday === 0 ? '今天生日！' : (u.daysToBday + '天后生日');
-    html += '<div class="birthday-card"><div class="dog-avatar">🐶</div><div class="info"><div class="name">' + u.dog.name + ' · ' + btxt + '</div><div class="detail">主人：' + u.customer.ownerName + ' · ' + u.customer.phone + ' · 生日：' + u.bdate + '</div></div></div>';
+    var isToday = u.daysToBday === 0;
+    var whenTxt = isToday ? '今天生日 🎉' : ('还有 ' + u.daysToBday + ' 天');
+    var breed = (u.dog.breed || '').trim();
+    var ageStr = calcAge(u.dog.birthday);
+    var owner = u.customer.ownerName || '（未知名客户）';
+    var phone = u.customer.phone || '';
+    html += '<details class="bday-item' + (isToday ? ' is-today' : '') + '" open>'
+      + '<summary><span class="bday-avatar">🐶</span>'
+      + '<span class="bday-main"><span class="bday-dog">' + escapeHtml(u.dog.name) + '</span>'
+      + (breed ? '<span class="bday-breed">' + escapeHtml(breed) + '</span>' : '')
+      + '<span class="bday-when">' + whenTxt + '</span></span></summary>'
+      + '<div class="bday-detail-body"><div class="bday-row">'
+      + '<span><span class="bday-k">主人：</span>' + escapeHtml(owner) + '</span>'
+      + (phone ? '<span><span class="bday-k">电话：</span>' + phoneDial(phone) + '</span>' : '')
+      + '<span><span class="bday-k">生日：</span>' + escapeHtml(u.bdate) + '</span>'
+      + '<span><span class="bday-k">年龄：</span>' + escapeHtml(ageStr) + '</span>'
+      + '</div>'
+      + '<button class="btn btn-outline btn-sm" onclick="viewCustomer(\'' + u.customer.id + '\')">🐕 查看' + escapeHtml(owner) + '的客户档案</button>'
+      + '</div></details>';
   });
   $('birthdayAlerts').innerHTML = html;
 }
