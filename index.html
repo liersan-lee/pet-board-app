@@ -2723,7 +2723,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260917.230';
+var APP_VERSION = '20260917.231';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -3294,7 +3294,7 @@ const STORAGE_KEY = 'petBoardingDB_v3';
 // （GitHub Pages 公开部署才需要改成「手动输入 token」，本项目已确定保留老链接，故恢复写死方式。）
 // 若未来需要换 token，可在浏览器控制台 localStorage 存 petBoardingGitHubToken 覆盖；留空则回退到下面写死的值。
 var SYNC_BACKEND = 'github';
-var GITHUB_TOKEN_DEFAULT = ''; // 公开 Pages 版不内置 token（GitHub 密钥保护会拒绝含 token 的公开文件）；首次打开由员工粘贴一次，存浏览器本地
+var GITHUB_TOKEN_DEFAULT = ''; // 老链接硬编码（永久 No-expiration token，2026-09-16 生成），员工无感同步
 var GITHUB_TOKEN = GITHUB_TOKEN_DEFAULT; // 运行时副本；本地若存了自定义 token，会先验证再覆盖
 var GITHUB_REPO  = 'liersan-lee/pet-board-data';
 var GITHUB_PATH  = 'data/db.json';
@@ -5560,9 +5560,12 @@ function getHolidayLabel(dateStr) {
 // 重建房态下拉：默认仅空闲房；当入住日期选在未来（如春节）时，也允许选择当前被占用的房间排下一位客户。
 function refreshBookingRoomOptions(includeRoomId) {
   var sel = document.getElementById('bkRoom'); if (!sel) return;
-  // 再次预订模式：房间锁定在当前房，禁止切换到其他房间（用户明确要求）
-  if (reBookingRoom && DB.rooms[reBookingRoom]) {
-    sel.innerHTML = '<option value="' + reBookingRoom + '">' + roomDisplayName(reBookingRoom) + '（已锁定 · 再次预订）</option>';
+  // 再次预订模式：房间锁定在当前房，禁止切换到其他房间（用户明确要求）。
+  // 不再依赖 DB.rooms[reBookingRoom] 是否命中——reBook 模式一律锁定当前房，
+  // 避免任何边缘情况（旧缓存/数据竞态导致 DB.rooms 暂缺该键）又掉回普通下拉、跳到 A001。
+  if (reBookingRoom) {
+    var _lockLabel = (DB.rooms[reBookingRoom] ? roomDisplayName(reBookingRoom) : reBookingRoom);
+    sel.innerHTML = '<option value="' + reBookingRoom + '">' + _lockLabel + '（已锁定 · 再次预订）</option>';
     sel.value = reBookingRoom;
     sel.disabled = true;
     return;
