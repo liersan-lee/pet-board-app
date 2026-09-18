@@ -97,6 +97,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 .multi-room-tag .mr-idx{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:rgba(255,255,255,.35);margin-right:3px;font-size:9px}
 .checkout-today-card{background:#FFF8F1;border:1px solid #FFD9B3}
 .checkin-today-card{background:#F1F8FF;border:1px solid #BBD7F2}
+/* 再次预定页：入住中卡片高亮，非入住中置灰 */
+.rebook-badge{position:absolute;top:6px;right:6px;background:#2E7D32;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;z-index:3;white-space:nowrap}
+.room-card.rebook-card{border-color:#2E7D32;box-shadow:0 0 0 2px rgba(46,125,50,.12)}
+.room-card.rebook-card:hover{border-color:#1B5E20;transform:translateY(-3px);box-shadow:0 6px 16px rgba(46,125,50,.18)}
+.room-card.disabled-card:hover{transform:none;box-shadow:none}
 .checkout-today-card .ct-area, .checkin-today-card .ct-area{font-weight:700;font-size:14px;padding:6px 10px;border-radius:6px;margin:10px 0 6px;color:#fff}
 .checkout-today-card .ct-area.big, .checkin-today-card .ct-area.big{background:#E65100}
 .checkout-today-card .ct-area.small, .checkin-today-card .ct-area.small{background:#0277BD}
@@ -2739,7 +2744,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.242';
+var APP_VERSION = '20260918.243';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -2781,6 +2786,7 @@ if (APP_MODE === 'view') {
   <div class="nav" data-page-node-id="QvXGwUKtZ0ExfbwcqC8jP7">
     <div class="nav-item active" onclick="switchPage('dashboard')" data-page-node-id="2nCNisAuSczhxPeQaKLU3m">📊 数据看板</div>
     <div class="nav-item" onclick="switchPage('booking')" data-page-node-id="IgFQCHPK9Jp7dJ0SkS8S6V">🏠 订房系统</div>
+    <div class="nav-item" onclick="switchPage('rebook')" data-page-node-id="rebookNav">🔁 再次预定</div>
     <div class="nav-item" onclick="switchPage('grooming')" data-page-node-id="lGIeYb8OVzTwTO6AAncMNr">💇 员工提成</div>
     <div class="nav-item" onclick="switchPage('food')" data-page-node-id="56WI8dG9bdMlOWLXCZQcMM">📦 商品</div>
     <div class="nav-item" onclick="switchPage('customer')" data-page-node-id="mYwQ2BjXgVLBKWEyxAgCiG">🐕 客户档案</div>
@@ -2798,6 +2804,7 @@ if (APP_MODE === 'view') {
 <div class="bottom-nav" data-page-node-id="wh52OmrfKrJEPrKTIY4pJN">
   <div class="bn-item active" onclick="switchPage('dashboard')" data-page-node-id="4kND3dssyFfE6ihfvscLax"><span class="icon" data-page-node-id="KixcYY6WGiu5Bf9yjojFHg">📊</span>看板</div>
   <div class="bn-item" onclick="switchPage('booking')" data-page-node-id="vzSSre5e6fJnDAzeCCDxQC"><span class="icon" data-page-node-id="bsasGZHPzkE2uSpEq0vBjT">🏠</span>订房</div>
+  <div class="bn-item" onclick="switchPage('rebook')" data-page-node-id="rebookBN"><span class="icon" data-page-node-id="rebookBNIcon">🔁</span>再订</div>
   <div class="bn-item" onclick="switchPage('grooming')" data-page-node-id="XV1wRKtpkRpYiVCDXT4p0N"><span class="icon" data-page-node-id="QXffUa5vGEfSQ6FVHzuPoq">💇</span>洗护</div>
   <div class="bn-item" onclick="switchPage('food')" data-page-node-id="ykxDjCFdu5ZfiKepesng4H"><span class="icon" data-page-node-id="ol9KpaUzTXSUXbTZnswPBR">📦</span>商品</div>
   <div class="bn-item" onclick="switchPage('customer')" data-page-node-id="lSVn2gWe1XvNFEv7xNEJO4"><span class="icon" data-page-node-id="59l45iH1DH3MvRb8YzdlIP">🐕</span>客户</div>
@@ -2892,6 +2899,20 @@ if (APP_MODE === 'view') {
       <input type="text" id="orderSearch" placeholder="搜索主人名/狗名/电话/房间号" oninput="renderOrders()" style="width:240px" data-page-node-id="yGWH0berKz53hM1xHb5GGF">
     </div>
     <div id="ordersTable" data-page-node-id="uXRYH3uMj1wbuQJRd7UOAQ"></div>
+  </div>
+</div>
+
+<!-- ====== 再次预定 ====== -->
+<div class="page" id="page-rebook" data-page-node-id="rebookPage">
+  <div class="card" data-page-node-id="rebookCard">
+    <div class="card-title" data-page-node-id="rebookTitle">
+      <span class="left" data-page-node-id="rebookTitleText">🔁 再次预定</span>
+      <button class="btn btn-outline btn-sm" onclick="renderRebookPage()" data-page-node-id="rebookRefresh">🔄 刷新</button>
+    </div>
+    <div style="font-size:13px;color:var(--gray);margin-bottom:12px" data-page-node-id="rebookTip">点选<b>入住中</b>的房间，直接为该房排下一位客户；房间已锁定，不会跳到其他房。</div>
+    <div class="room-tabs" id="rebookRoomTabs" data-page-node-id="rebookTabs"></div>
+    <div class="room-stats" id="rebookRoomStats" data-page-node-id="rebookStats"></div>
+    <div id="rebookRoomGrid" data-page-node-id="rebookGrid"></div>
   </div>
 </div>
 
@@ -4875,6 +4896,7 @@ function refreshCurrentPage() {
   try {
     if ($('page-dashboard').classList.contains('active')) renderDashboard();
     if ($('page-booking').classList.contains('active')) { renderRoomBoard(); renderOrders(); }
+    if ($('page-rebook') && $('page-rebook').classList.contains('active')) renderRebookPage();
     if ($('page-customer').classList.contains('active')) renderCustomers();
     if ($('page-food').classList.contains('active')) renderFoodPage();
     if ($('page-grooming') && $('page-grooming').classList.contains('active')) {
@@ -5313,6 +5335,7 @@ function switchPage(name) {
   });
   if (name === 'dashboard') renderDashboard();
   if (name === 'booking') { renderRoomTabs(); renderRoomBoard(); renderOrders(); }
+  if (name === 'rebook') renderRebookPage();
   if (name === 'grooming') renderGroomingPage();
   if (name === 'food') renderFoodPage();
   if (name === 'customer') renderCustomers();
@@ -6019,6 +6042,63 @@ function renderOrderInfo(order, room, label) {
   // 寄养档案照片（协议 / 狗狗情况一览表等）
   html += renderOrderPhotosBlock(order);
   return html;
+}
+
+// ==================== 再次预定专用页：只显示房间，点击入住中房间直接打开再次预订（房间硬锁定）====================
+function renderRebookPage() {
+  var rooms = Object.values(DB.rooms || {}).filter(function(r){ return !!r; });
+  var groups = {};
+  rooms.forEach(function(r){
+    var key = r.area + '-' + r.subArea;
+    if (!groups[key]) groups[key] = { label: roomZoneLabel(r), rooms: [] };
+    groups[key].rooms.push(r);
+  });
+  var bGroups = Object.values(groups).sort(function(x,y){
+    var kx = SUBAREA_ORDER[x.area + '-' + x.subArea] != null ? SUBAREA_ORDER[x.area + '-' + x.subArea] : 999;
+    var ky = SUBAREA_ORDER[y.area + '-' + y.subArea] != null ? SUBAREA_ORDER[y.area + '-' + y.subArea] : 999;
+    return kx - ky;
+  });
+
+  // 统计
+  var occ = rooms.filter(function(r){ return r.status === 'occupied'; }).length;
+  var free = rooms.filter(function(r){ return r.status === 'free'; }).length;
+  var booked = rooms.filter(function(r){ return r.status === 'booked'; }).length;
+  var maint = rooms.filter(function(r){ return r.status === 'maintenance'; }).length;
+  if ($('rebookRoomStats')) {
+    $('rebookRoomStats').innerHTML = '<span>入住中 ' + occ + '</span><span>已预订 ' + booked + '</span><span>空闲 ' + free + '</span><span>维修 ' + maint + '</span>';
+  }
+
+  var html = '';
+  bGroups.forEach(function(g){
+    g.rooms.sort(function(a,b){
+      var oa = ROOM_ORDER[a.id] || '9:9999', ob = ROOM_ORDER[b.id] || '9:9999';
+      if (oa !== ob) return oa < ob ? -1 : 1;
+      return roomIdCompare(a.id, b.id);
+    });
+    html += '<div class="room-section"><div class="room-section-title">' + g.label + '<span style="font-size:12px;color:var(--gray);font-weight:400">' + g.rooms.length + '间</span></div><div class="room-grid">';
+    g.rooms.forEach(function(r){
+      var sm = {free:['空闲','free'],booked:['已预订','booked'],occupied:['入住中','occupied'],maintenance:['维修中','maintenance']}[r.status] || ['未知','free'];
+      var order = (r.status === 'occupied' || r.status === 'booked') ? getRoomOrder(r) : null;
+      var dogLine = '', ownerLine = '', dateLine = '';
+      if (order) {
+        var dogArr = getOrderDogNames(order);
+        dogLine = '<div class="gi-dogs">🐶 ' + escapeHtml(dogArr.join('、')) + '</div>';
+        ownerLine = '<div>👤 ' + escapeHtml(order.ownerName || '') + '</div>';
+        dateLine = '<div>📅 ' + formatDate(order.checkIn) + '~' + formatDate(order.checkOut || order.expectedCheckOut) + '</div>';
+      }
+      var clickable = (r.status === 'occupied' && APP_MODE !== 'view');
+      var card = '<div class="room-card ' + sm[1] + (clickable ? ' rebook-card' : ' disabled-card') + '" ' + (clickable ? 'onclick="openNewBooking(\'' + r.id + '\', null, true)" style="cursor:pointer"' : 'style="opacity:.65;cursor:not-allowed"') + '>'
+        + '<div class="room-no">' + roomDisplayName(r.id) + '</div>'
+        + '<div class="room-type">' + g.label + '</div>'
+        + '<span class="room-status">' + sm[0] + '</span>'
+        + (clickable ? '<div class="rebook-badge">🔁 再次预定</div>' : '')
+        + '<div class="guest-info">' + dogLine + ownerLine + dateLine + '</div>'
+        + '</div>';
+      html += card;
+    });
+    html += '</div></div>';
+  });
+  if ($('rebookRoomGrid')) $('rebookRoomGrid').innerHTML = html;
 }
 
 // ==================== 寄养档案照片（元数据进 DB.photos 随同步共享；字节存云端 data/photos/<id>.jpg，本地仅留缓存）====================
@@ -13632,6 +13712,7 @@ ensureGitHubToken(function(){
 });
 
 setInterval(function() { if ($('page-dashboard').classList.contains('active')) renderDashboard(); }, 60000);
+setInterval(function() { if ($('page-rebook') && $('page-rebook').classList.contains('active')) renderRebookPage(); }, 60000);
 
 // ==================== 自动检测新版本（根治"需无痕模式才能看到更新"的缓存问题） ====================
 // 浏览器/代理可能缓存了旧版 HTML，导致普通模式一直显示旧页面，唯有无痕模式绕过缓存才看得到新内容。
