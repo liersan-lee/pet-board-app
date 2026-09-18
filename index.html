@@ -2744,7 +2744,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.243';
+var APP_VERSION = '20260919.244';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -2909,7 +2909,7 @@ if (APP_MODE === 'view') {
       <span class="left" data-page-node-id="rebookTitleText">🔁 再次预定</span>
       <button class="btn btn-outline btn-sm" onclick="renderRebookPage()" data-page-node-id="rebookRefresh">🔄 刷新</button>
     </div>
-    <div style="font-size:13px;color:var(--gray);margin-bottom:12px" data-page-node-id="rebookTip">点选<b>入住中</b>的房间，直接为该房排下一位客户；房间已锁定，不会跳到其他房。</div>
+    <div style="font-size:13px;color:var(--gray);margin-bottom:12px" data-page-node-id="rebookTip">点选<b>入住中</b>的房间，直接为该房排下一位客户（十一/春节提前排房用）；房间已锁定，不会跳到其他房。点房间卡片也可<b>查看/修改当前订单、换房、退房</b>。本页与「订房系统」是<b>同一份订单</b>，再次预订保存后两边都会显示，无需担心显示在哪儿。</div>
     <div class="room-tabs" id="rebookRoomTabs" data-page-node-id="rebookTabs"></div>
     <div class="room-stats" id="rebookRoomStats" data-page-node-id="rebookStats"></div>
     <div id="rebookRoomGrid" data-page-node-id="rebookGrid"></div>
@@ -6046,6 +6046,11 @@ function renderOrderInfo(order, room, label) {
 
 // ==================== 再次预定专用页：只显示房间，点击入住中房间直接打开再次预订（房间硬锁定）====================
 function renderRebookPage() {
+  // 与「订房系统」页完全一致的对账：保证房间状态 = 关联订单的真相，杜绝再订页误显示全空闲
+  try {
+    if (releaseGhostRoomOccupancy() && APP_MODE !== 'view') saveDB();
+    if (syncRoomStatusFromOrders() && APP_MODE !== 'view') saveDB();
+  } catch(e){}
   var rooms = Object.values(DB.rooms || {}).filter(function(r){ return !!r; });
   var groups = {};
   rooms.forEach(function(r){
@@ -6086,12 +6091,16 @@ function renderRebookPage() {
         ownerLine = '<div>👤 ' + escapeHtml(order.ownerName || '') + '</div>';
         dateLine = '<div>📅 ' + formatDate(order.checkIn) + '~' + formatDate(order.checkOut || order.expectedCheckOut) + '</div>';
       }
-      var clickable = (r.status === 'occupied' && APP_MODE !== 'view');
-      var card = '<div class="room-card ' + sm[1] + (clickable ? ' rebook-card' : ' disabled-card') + '" ' + (clickable ? 'onclick="openNewBooking(\'' + r.id + '\', null, true)" style="cursor:pointer"' : 'style="opacity:.65;cursor:not-allowed"') + '>'
+      var canEdit = (r.status === 'occupied' || r.status === 'booked') && APP_MODE !== 'view';
+      var isOcc = (r.status === 'occupied');
+      var card = '<div class="room-card ' + sm[1] + (canEdit ? ' rebook-card' : ' disabled-card') + '" '
+        + (canEdit ? ('onclick="openRoomAction(\'' + r.id + '\')" style="cursor:pointer"') : 'style="opacity:.65;cursor:not-allowed"')
+        + '>'
         + '<div class="room-no">' + roomDisplayName(r.id) + '</div>'
         + '<div class="room-type">' + g.label + '</div>'
         + '<span class="room-status">' + sm[0] + '</span>'
-        + (clickable ? '<div class="rebook-badge">🔁 再次预定</div>' : '')
+        + (isOcc ? '<div class="rebook-badge" onclick="event.stopPropagation();openNewBooking(\'' + r.id + '\', null, true)" title="给这间房的狗排下次回来住">🔁 再次预定</div>'
+                 : (r.status === 'booked' ? '<div class="rebook-badge" style="background:#FB8C00">📅 已预订</div>' : ''))
         + '<div class="guest-info">' + dogLine + ownerLine + dateLine + '</div>'
         + '</div>';
       html += card;
