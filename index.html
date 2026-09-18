@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.236';
+var APP_VERSION = '20260918.237';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -3613,7 +3613,17 @@ function saveDB() {
   // 保存前先对账：房间占用一律由订单派生（单一真相），既保证一致，又绝不会因“房间与订单对不上”而误删订单/清空入住。
   rebuildRoomOccupancy();
   // 立即保存到本地（不会丢）
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
+  } catch(e) {
+    // 本地存储溢出：优先自动清理照片字节缓存（通常占大头），然后重试；仍失败则提示用户。
+    cleanOldPhotoCache(30);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+    catch(e2) {
+      try { localStorage.removeItem(PHOTO_BYTES_KEY); localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+      catch(e3) { showToast('⚠️ 本地存储空间不足，请到「设置 → 照片缓存管理」清空照片缓存，或清理浏览器数据'); return; }
+    }
+  }
   // 延迟同步到云端（防抖：2秒内多次操作只同步一次，避免API限流）
   scheduleCloudSync();
   // 更新同步指示器
@@ -5912,14 +5922,15 @@ function openRoomAction(roomId) {
   var order = getRoomOrder(room); var price = getRoomPrice(room);
   $('modalRoomTitle').textContent = room.id + ' · ' + room.label;
   var body = '', footer = '';
-  // 再次预订按钮（再次预订 = 给当前房排未来时段的下一个住户，房间锁定不跳房）
+  // 再次预订按钮：仅「已入住」房间显示。用户明确要求只有通过已入住的房间才能点开再次预订，
+  // 且再次预订必须锁定当前房、不展示一排可选房间。
   var rebookBtn = (APP_MODE==='view'?'':'<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\', null, true)">🔁 再次预订</button>');
   if (room.status === 'free') {
     body = '<div class="alert alert-success"><strong>✅ 房间空闲</strong></div><div style="margin:16px 0"><div style="margin-bottom:8px"><strong>房间号：</strong>' + room.id + '</div><div style="margin-bottom:8px"><strong>区域：</strong>' + room.label + '</div><div style="margin-bottom:8px"><strong>日单价：</strong>¥' + price + '/天</div></div>';
-    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="setRoomMaintenance(\'' + roomId + '\')">🔧 设为维修</button>') + '<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\')">📋 预订此房</button>' + ((APP_MODE==='view' || !getRoomFutureBookings(roomId).length) ? '' : rebookBtn);
+    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="setRoomMaintenance(\'' + roomId + '\')">🔧 设为维修</button>') + '<button class="btn btn-primary edit-only" onclick="closeModal(\'modalRoom\');openNewBooking(\'' + roomId + '\')">📋 预订此房</button>';
   } else if (room.status === 'booked') {
     body = renderOrderInfo(order, room, '已预订');
-    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>' + rebookBtn);
+    footer = (APP_MODE === 'view' ? '' : '<button class="btn btn-outline" onclick="cancelBooking(\'' + order.id + '\')">❌ 取消预订</button>') + '<button class="btn btn-success edit-only" onclick="checkIn(\'' + order.id + '\')">✅ 办理入住</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>');
   } else if (room.status === 'occupied') {
     body = renderOrderInfo(order, room, '入住中');
     footer = '<button class="btn btn-warning edit-only" onclick="openCheckout(\'' + order.id + '\')">💰 退房结算</button>' + (APP_MODE==='view'?'':'<button class="btn btn-outline edit-only" onclick="openEditBooking(\'' + order.id + '\')">✏️ 修改信息</button><button class="btn btn-outline edit-only" onclick="openTransferRoom(\'' + roomId + '\')">🔄 换房</button>' + rebookBtn);
@@ -6008,11 +6019,24 @@ var _photoFetching = {};
 // 结构：{ photoId: { d: dataUrl, ts: 存入时间戳 } }；旧版直接存字符串亦兼容
 function loadPhotoBytes(){ try{var s=localStorage.getItem(PHOTO_BYTES_KEY);return s?JSON.parse(s):{};}catch(e){return {};} }
 function savePhotoBytes(obj){
-  try{ localStorage.setItem(PHOTO_BYTES_KEY, JSON.stringify(obj)); PHOTO_CACHE_OVERFLOW=false; }
-  catch(e){ if(!PHOTO_CACHE_OVERFLOW){ PHOTO_CACHE_OVERFLOW=true; showToast('⚠️ 本地照片缓存空间不足，请到「设置 → 照片缓存管理」清理旧照片'); } }
+  try{ localStorage.setItem(PHOTO_BYTES_KEY, JSON.stringify(obj)); PHOTO_CACHE_OVERFLOW=false; return true; }
+  catch(e){ return false; }
+}
+// 保存照片缓存：优先自动清理释放空间，避免反复提示空间不足。
+// 策略：先尝试保存 → 失败则清 30 天旧缓存 → 再失败则清全部缓存 → 仍失败才提示用户去设置页手动清理。
+function savePhotoBytesWithCleanup(obj){
+  if (savePhotoBytes(obj)) return true;
+  cleanOldPhotoCache(30);
+  if (savePhotoBytes(obj)) return true;
+  cleanOldPhotoCache(7);
+  if (savePhotoBytes(obj)) return true;
+  try { localStorage.removeItem(PHOTO_BYTES_KEY); } catch(e){}
+  if (savePhotoBytes(obj)) return true;
+  if(!PHOTO_CACHE_OVERFLOW){ PHOTO_CACHE_OVERFLOW=true; showToast('⚠️ 本地存储空间严重不足，请到「设置 → 照片缓存管理」一键清空，或清理浏览器缓存'); }
+  return false;
 }
 function getPhotoBytes(id){ var b=loadPhotoBytes(); var e=b[id]; if(!e) return null; return (typeof e==='object')? e.d : e; }
-function setPhotoBytes(id, dataUrl){ var b=loadPhotoBytes(); b[id]={ d:dataUrl, ts:Date.now() }; savePhotoBytes(b); }
+function setPhotoBytes(id, dataUrl){ var b=loadPhotoBytes(); b[id]={ d:dataUrl, ts:Date.now() }; savePhotoBytesWithCleanup(b); }
 // 统计本地照片缓存占用
 function photoCacheInfo(){
   var b=loadPhotoBytes(); var keys=Object.keys(b); var bytes=0;
@@ -6447,10 +6471,14 @@ function openNewBooking(roomId, includeRoomId, reBook) {
   });
 
   var _rebookHead = (reBook ? '<div id="rebookScheduleWrap" style="margin-bottom:14px"></div>' : '');
+  // 再次预订：房间字段改为只读展示，不再生成 <select>，彻底避免用户看到一排可选房间。
+  var _roomField = reBook
+    ? ('<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><input type="hidden" id="bkRoom" value="' + roomId + '"><div id="bkRoomReadonly" style="background:#F5F5F5;border:1px solid #E0E0E0;border-radius:8px;padding:10px 12px;font-weight:700;color:#D32F2F;display:flex;align-items:center;gap:8px"><span>🔒</span><span>' + (DB.rooms[roomId] ? roomDisplayName(roomId) : roomId) + ' · ' + (DB.rooms[roomId] ? roomZoneLabel(DB.rooms[roomId]) : '') + '</span></div><span id="bkRoomHint" style="font-size:12px;color:#D32F2F">再次预订已锁定为当前房间，不可切换到其他房间</span></div>')
+    : ('<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><select id="bkRoom" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></select><span id="bkRoomHint" style="font-size:12px;color:var(--gray)">默认仅空闲房；入住日期选在未来（如春节）时，占用房也可选以排下一位客户</span></div>');
   $('bookingBody').innerHTML = _rebookHead
     + '<div class="form-row"><div class="form-group"><label>订单类型</label><select id="bkOrderType" onchange="toggleTrainingItems()"><option value="boarding">寄养</option><option value="training">训练</option><option value="diet">减肥训练营</option></select></div>'
     + '<div class="form-group"><label style="display:flex;align-items:center"><input type="checkbox" id="bkOwnDog" onchange="updateBookingFeeEstimate()" style="width:auto;margin-right:6px">🏠 自家狗（不计入入住率 · 房费¥0）</label></div></div>'
-    + '<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><select id="bkRoom" onchange="updatePickupEstimate();updateBookingFeeEstimate()"></select><span id="bkRoomHint" style="font-size:12px;color:var(--gray)">默认仅空闲房；入住日期选在未来（如春节）时，占用房也可选以排下一位客户</span></div>'
+    + _roomField
     + '<div class="form-group" style="position:relative"><label>🔍 查找已有客户（按 姓名 / 电话 / 狗狗名 / 犬种）</label><input type="text" id="bkFind" placeholder="输入主人姓名、电话、狗狗名或犬种，边打字边出结果" data-sug="customer" data-sug-field="find" autocomplete="off"><div class="cust-suggest" id="bkFindSuggest"></div></div>'
     + '<div id="bkEditCustWrap" style="display:none;margin:0 0 12px"><button type="button" class="btn btn-outline btn-sm" onclick="editMatchedCustomer()">✏️ 编辑该客户档案（补录缺失信息）</button></div>'
     + '<div class="form-group"><label>选择客户</label><select id="bkCustomer" onchange="onCustomerSelect()">' + custHtml + '</select><span style="font-size:12px;color:var(--gray)">选已有客户自动填充，选「新建」手动填写</span></div></div>'
@@ -6516,10 +6544,10 @@ function openNewBooking(roomId, includeRoomId, reBook) {
       });
       if (_latest) { var _cd = new Date(_latest); if (!isNaN(_cd.getTime())) { _cd.setDate(_cd.getDate() + 1); def = _cd.toISOString().slice(0, 10); } }
       var ci = document.getElementById('bkCheckIn'); if (ci) ci.value = def;
-      refreshBookingRoomOptions(); updateBookingFeeEstimate(); renderRebookSchedule();
-      // 保险：再次预订模式下房间下拉强制锁定为当前房（防止任何异步/竞态导致没锁上）
-      var sel = document.getElementById('bkRoom');
-      if (sel) { sel.value = roomId; sel.disabled = true; }
+      // 再次预订模式下房间字段是 hidden input，直接确保值正确；不调用 refreshBookingRoomOptions（避免渲染出可选下拉）。
+      var _roomInput = document.getElementById('bkRoom');
+      if (_roomInput) { _roomInput.value = roomId; }
+      updateBookingFeeEstimate(); renderRebookSchedule();
       var rh = document.getElementById('bkRoomHint');
       if (rh) { rh.innerHTML = '🔒 已锁定为当前房间，再次预订不可切换其他房间'; rh.style.color = '#D32F2F'; }
     }, 60);
@@ -6529,8 +6557,11 @@ function openNewBooking(roomId, includeRoomId, reBook) {
   // 新建订单：无历史收款，重置已收基线并挂上换房联动
   setPaidOriginal(0);
   var bkRoomSel = $('bkRoom');
-  if (bkRoomSel) bkRoomSel.addEventListener('change', onBookingRoomChange);
-  if (bkRoomSel && reBookingRoom) bkRoomSel.addEventListener('change', function(){ renderRebookSchedule(); });
+  // 再次预订模式下 bkRoom 是 hidden input，无需 change 监听；普通预订才需要下拉联动。
+  if (bkRoomSel && !reBookingRoom) {
+    bkRoomSel.addEventListener('change', onBookingRoomChange);
+    bkRoomSel.addEventListener('change', function(){ renderRebookSchedule(); });
+  }
   // 自动记录录入员工（员工版=本机身份；管理版=默认首位员工，可改）
   var cbDisplay = document.getElementById('bkCreatedByDisplay');
   if (cbDisplay) {
@@ -6546,7 +6577,10 @@ function openNewBooking(roomId, includeRoomId, reBook) {
     }
   }
   $('modalBooking').classList.add('show');
-  refreshBookingRoomOptions(includeRoomId); // 动态生成房间下拉（含未来日期可选占用房）
+  // 再次预订模式：房间字段是只读 hidden input，不生成下拉；普通预订才动态生成房间下拉。
+  if (!reBookingRoom) {
+    refreshBookingRoomOptions(includeRoomId);
+  }
   selectedCustomerId = null;
   var wrap = document.getElementById('bkEditCustWrap'); if (wrap) wrap.style.display = 'none';
   initBookingDogRows();
