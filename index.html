@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.240';
+var APP_VERSION = '20260918.241';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -5606,10 +5606,16 @@ function refreshBookingRoomOptions(includeRoomId) {
   // 不再依赖 DB.rooms[reBookingRoom] 是否命中——reBook 模式一律锁定当前房，
   // 避免任何边缘情况（旧缓存/数据竞态导致 DB.rooms 暂缺该键）又掉回普通下拉、跳到 A001。
   if (reBookingRoom) {
-    var _lockLabel = (DB.rooms[reBookingRoom] ? roomDisplayName(reBookingRoom) : reBookingRoom);
-    sel.innerHTML = '<option value="' + reBookingRoom + '">' + _lockLabel + '（已锁定 · 再次预订）</option>';
-    sel.value = reBookingRoom;
-    sel.disabled = true;
+    // 再次预订模式：房间一律锁定当前房，绝不渲染可选下拉（bkRoom 在 reBook 时是隐藏 input）。
+    // 即使旧缓存把 bkRoom 当成 <select>，这里也只确保值正确、不生成一排可选房间。
+    if (sel && sel.tagName === 'SELECT') {
+      var _lockLabel = (DB.rooms[reBookingRoom] ? roomDisplayName(reBookingRoom) : reBookingRoom);
+      sel.innerHTML = '<option value="' + reBookingRoom + '">' + _lockLabel + '（已锁定 · 再次预订）</option>';
+      sel.value = reBookingRoom;
+      sel.disabled = true;
+    } else if (sel) {
+      sel.value = reBookingRoom;
+    }
     return;
   }
   sel.disabled = false;
@@ -6501,7 +6507,10 @@ function openNewBooking(roomId, includeRoomId, reBook) {
     custHtml += '<option value="' + c.id + '">' + c.ownerName + ' · ' + c.phone + ' · 🐶' + dogsNames + '</option>';
   });
 
-  var _rebookHead = (reBook ? '<div id="rebookScheduleWrap" style="margin-bottom:14px"></div>' : '');
+  var _rebookHead = (reBook ? ('<div id="rebookModeBar" style="background:#E8F5E9;border:1px solid #C8E6C9;border-radius:10px;padding:10px 12px;margin-bottom:12px">'
+    + '<div style="font-size:13px;color:#1B5E20">🔒 房间已锁定为 <b>' + (DB.rooms[roomId] ? roomDisplayName(roomId) : roomId) + '</b>。已自动带出<b>当前在住的狗狗</b>信息，确认下次入住/退房时间即可保存。</div>'
+    + '<button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="rebookSwitchToNewCustomer()">🆕 排其他客户（清空当前狗狗，房间仍锁定本房）</button>'
+    + '</div><div id="rebookScheduleWrap" style="margin-bottom:14px"></div>') : '');
   // 再次预订：房间字段改为只读展示，不再生成 <select>，彻底避免用户看到一排可选房间。
   var _roomField = reBook
     ? ('<div class="form-row"><div class="form-group"><label>选择房间 <span class="required">*</span></label><input type="hidden" id="bkRoom" value="' + roomId + '"><div id="bkRoomReadonly" style="background:#F5F5F5;border:1px solid #E0E0E0;border-radius:8px;padding:10px 12px;font-weight:700;color:#D32F2F;display:flex;align-items:center;gap:8px"><span>🔒</span><span>' + (DB.rooms[roomId] ? roomDisplayName(roomId) : roomId) + ' · ' + (DB.rooms[roomId] ? roomZoneLabel(DB.rooms[roomId]) : '') + '</span></div><span id="bkRoomHint" style="font-size:12px;color:#D32F2F">再次预订已锁定为当前房间，不可切换到其他房间</span></div>')
@@ -6578,6 +6587,8 @@ function openNewBooking(roomId, includeRoomId, reBook) {
       // 再次预订模式下房间字段是 hidden input，直接确保值正确；不调用 refreshBookingRoomOptions（避免渲染出可选下拉）。
       var _roomInput = document.getElementById('bkRoom');
       if (_roomInput) { _roomInput.value = roomId; }
+      // 带出当前在住的狗 + 主人信息（同狗排下次回来住），无需重新录入
+      try { prefillRebookSameDog(roomId); } catch (e) { if (window.console) console.warn('[rebook prefill]', e); }
       updateBookingFeeEstimate(); renderRebookSchedule();
       var rh = document.getElementById('bkRoomHint');
       if (rh) { rh.innerHTML = '🔒 已锁定为当前房间，再次预订不可切换其他房间'; rh.style.color = '#D32F2F'; }
@@ -8007,6 +8018,52 @@ function renderRebookSchedule() {
     + '✅ 本次新住户建议入住在 <b>' + (latestEnd ? escapeHtml((latestEnd.slice(0,16).replace('T',' '))) + ' 之后' : '任意日期') + '</b>，系统会自动校验时间不冲突</div>';
   html += '</div>';
   wrap.innerHTML = html;
+}
+
+// 再次预订（reBook）：默认带出当前在住房间的狗狗 + 主人信息，
+// 员工只需选下次的入住/退房时间即可保存（同狗排下次回来住）。
+// 房间由 reBookingRoom 锁死，本函数不触碰房间下拉，只填客户与狗狗。
+function prefillRebookSameDog(roomId) {
+  var room = DB.rooms[roomId]; if (!room) return;
+  var order = getRoomOrder(room); if (!order) return;
+  var owner = order.ownerName || '', phone = order.phone || '', idCard = order.idCard || '';
+  var oEl = document.getElementById('bkOwner'), pEl = document.getElementById('bkPhone'), iEl = document.getElementById('bkIdCard');
+  if (oEl) { oEl.value = owner; oEl.readOnly = !!(owner); }
+  if (pEl) { pEl.value = phone; pEl.readOnly = !!(phone); }
+  if (iEl) { iEl.value = idCard; iEl.readOnly = !!(idCard); }
+  // 关联客户下拉
+  var cEl = document.getElementById('bkCustomer');
+  if (cEl && order.customerId) {
+    var _ok = false;
+    for (var _i = 0; _i < cEl.options.length; _i++) { if (cEl.options[_i].value === order.customerId) { _ok = true; break; } }
+    if (_ok) { cEl.value = order.customerId; selectedCustomerId = order.customerId; }
+    else selectedCustomerId = null;
+  } else { selectedCustomerId = null; }
+  // 带出当前在住的狗（按订单 dogNames 逐只填，优先取客户档案里的品种/性别/体重/生日）
+  var names = ((order.dogNames || order.dogName || '') + '').split('、').map(function (s) { return (s || '').trim(); }).filter(Boolean);
+  if (!names.length && order.dogName) names = [order.dogName];
+  initBookingDogRows();
+  var cust = (order.customerId) ? DB.customers.find(function (x) { return x.id === order.customerId; }) : null;
+  names.forEach(function (nm) {
+    var dog = null;
+    if (cust) dog = (cust.dogs || []).find(function (d) { return ((d && d.name) || '') === nm; });
+    fillFirstBookingDogRow(dog || { name: nm });
+  });
+  updateBookingFeeEstimate();
+}
+
+// 再次预订：切换到「排其他客户」——清空当前狗与主人的预填，房间仍锁定本房
+function rebookSwitchToNewCustomer() {
+  var oEl = document.getElementById('bkOwner'), pEl = document.getElementById('bkPhone'), iEl = document.getElementById('bkIdCard');
+  if (oEl) { oEl.value = ''; oEl.readOnly = false; }
+  if (pEl) { pEl.value = ''; pEl.readOnly = false; }
+  if (iEl) { iEl.value = ''; iEl.readOnly = false; }
+  var cEl = document.getElementById('bkCustomer'); if (cEl) cEl.value = '';
+  selectedCustomerId = null;
+  var pr = document.getElementById('bkPrivacyRefused'); if (pr) pr.checked = false;
+  var aw = document.getElementById('bkAnonTipWrap'); if (aw) aw.style.display = 'none';
+  initBookingDogRows();
+  showToast('已切换为「排其他客户」：房间仍锁定当前房，请填写新客户信息');
 }
 
 function saveBooking(draft) {
