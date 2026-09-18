@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.241';
+var APP_VERSION = '20260918.242';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -13771,12 +13771,27 @@ function setupAutoUpdate() {
   bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#2E7D32;color:#fff;' +
     'padding:10px 14px;font-size:14px;display:none;align-items:center;justify-content:center;gap:12px;' +
     'box-shadow:0 2px 10px rgba(0,0,0,.35);text-align:center;';
-  bar.innerHTML = '<span>🔄 发现新版本 <b id="auVer"></b>，点此刷新获取最新功能</span>' +
+  bar.innerHTML = '<span>🔄 发现新版本 <b id="auVer"></b>，<span id="auCountdown"></span>秒后自动刷新</span>' +
     '<button id="auNow" style="background:#fff;color:#2E7D32;border:none;border-radius:6px;padding:6px 14px;font-weight:700;cursor:pointer">立即刷新</button>' +
     '<button id="auLater" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);border-radius:6px;padding:6px 12px;cursor:pointer">稍后</button>';
   document.body.appendChild(bar);
-  bar.querySelector('#auNow').addEventListener('click', function() { window.location.reload(true); });
-  bar.querySelector('#auLater').addEventListener('click', function() { bar.style.display = 'none'; });
+
+  function hardReload() {
+    try {
+      var sep = window.location.search ? '&' : '?';
+      window.location.replace(window.location.protocol + '//' + window.location.host + window.location.pathname + window.location.search + sep + '_nocache=' + Date.now() + window.location.hash);
+    } catch (e) {
+      window.location.reload(true);
+    }
+  }
+
+  bar.querySelector('#auNow').addEventListener('click', function() { hardReload(); });
+
+  var countdown = null, countdownTimer = null;
+  bar.querySelector('#auLater').addEventListener('click', function() {
+    if (countdownTimer) clearInterval(countdownTimer);
+    bar.style.display = 'none';
+  });
 
   var checking = false, shown = false;
   function checkAppVersion() {
@@ -13794,6 +13809,15 @@ function setupAutoUpdate() {
           shown = true;
           document.getElementById('auVer').textContent = online;
           bar.style.display = 'flex';
+          // 5 秒后自动刷新，避免员工点「稍后」一直用旧版
+          var left = 5;
+          var cd = document.getElementById('auCountdown');
+          cd.textContent = left;
+          countdownTimer = setInterval(function() {
+            left--;
+            if (cd) cd.textContent = left;
+            if (left <= 0) { clearInterval(countdownTimer); hardReload(); }
+          }, 1000);
         }
       }).catch(function() { checking = false; });
     } catch (e) { checking = false; }
