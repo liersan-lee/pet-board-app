@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.237';
+var APP_VERSION = '20260918.238';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -4792,7 +4792,15 @@ function mergeCloudData(cloudData) {
   DB.photos = mergeArray(DB.photos, cloudData.photos, 'id', 'photos');
 
   // 合并 activationCodes（按 code 唯一；吊销为权威，lastSeen 取较新者，确保激活/吊销状态双向同步且"最后在线时间"不被覆盖）
+  // 先按墓碑剔除已被删除的激活码，防止「删了秒回」
   if (cloudData.activationCodes && cloudData.activationCodes.length) {
+    var _acTomb = DB.tombstones || {};
+    cloudData.activationCodes = cloudData.activationCodes.filter(function(c){
+      return c && c.code && !_acTomb['activationCode:' + c.code];
+    });
+    DB.activationCodes = (DB.activationCodes || []).filter(function(c){
+      return c && c.code && !_acTomb['activationCode:' + c.code];
+    });
     var acMap = {};
     (DB.activationCodes || []).forEach(function(c){ if (c && c.code) acMap[c.code] = c; });
     cloudData.activationCodes.forEach(function(c){
@@ -13258,34 +13266,55 @@ function renderDeviceManage() {
     if (c.used === true) status = '✅ 已激活 · ' + (c.name || '') + ' · 最后在线 ' + fmtLastSeen(c);
     else if (c.usedBy) status = '⛔ 已吊销(' + (c.revokedReason === 'idle' ? '空闲' : '手动') + ') · ' + (c.name || '') + ' · 最后在线 ' + fmtLastSeen(c);
     else status = '⏳ 未使用';
+    // 操作按钮：已激活 → 吊销；已吊销/未使用 → 不再显示「吊销」，只显示删除（已吊销的允许直接删除）
     var act = c.used
-      ? '<button class="btn btn-danger btn-sm" onclick="revokeDevice(' + i + ')">吊销</button>'
-      : '<button class="btn btn-outline btn-sm" onclick="showActivationQR(\'' + c.code + '\')">📱 二维码</button>';
-    // 删除键：已激活的码先吊销再删除（先吊销，后删除）；未使用的直接删除
-    act += ' <button class="btn btn-outline btn-sm" style="color:#999" onclick="deleteDevice(' + i + ')">🗑 删除</button>';
+      ? '<button class="btn btn-danger btn-sm" onclick="revokeDevice(\'' + c.code + '\')">吊销</button>'
+      : '';
+    // 未使用的码显示二维码；已吊销的不显示二维码，避免误重新分发
+    if (!c.used && !c.usedBy) {
+      act += '<button class="btn btn-outline btn-sm" onclick="showActivationQR(\'' + c.code + '\')">📱 二维码</button> ';
+    }
+    // 删除键：任何状态都可删除；已激活的码会先吊销再删除
+    act += '<button class="btn btn-outline btn-sm" style="color:#999" onclick="deleteDevice(\'' + c.code + '\')">🗑 删除</button>';
     html += '<tr style="border-top:1px solid var(--gray-light)"><td style="padding:6px;font-weight:700;letter-spacing:1px">' + c.code + '</td><td style="padding:6px">' + (c.name || '') + '</td><td style="padding:6px">' + status + '</td><td style="padding:6px">' + act + '</td></tr>';
   });
   html += '</tbody></table>';
   box.innerHTML = html;
 }
-function revokeDevice(idx) {
+function revokeDevice(code) {
   showConfirm('吊销设备', '吊销后该员工设备将立即失效，需重新激活。确定？', function() {
     DB.activationCodes = DB.activationCodes || [];
-    var c = DB.activationCodes[idx];
-    if (c) { c.used = false; c.usedBy = null; c.usedAt = null; c.stateAt = now(); }
+    var c = DB.activationCodes.find(function(x){ return x && x.code === code; });
+    if (c) {
+      // 吊销必须保留 usedBy，否则 render 无法识别为「已吊销」状态，会秒回「未使用」。
+      c.used = false;
+      c.usedAt = null;
+      c.revokedReason = 'manual';
+      c.stateAt = now();
+    }
     saveDB(); syncToCloud(); renderDeviceManage(); showToast('已吊销该设备');
   });
 }
 // 删除激活码记录：已激活的码先吊销（使设备立即失效）再删除整条；未使用的直接删除
-function deleteDevice(idx) {
+// 写入墓碑防止云端同步又把该激活码复活（根治「删了秒回」）
+function deleteDevice(code) {
   DB.activationCodes = DB.activationCodes || [];
+  var idx = DB.activationCodes.findIndex(function(x){ return x && x.code === code; });
   var c = DB.activationCodes[idx];
   if (!c) return;
   var msg = c.used
     ? '该激活码已激活，将先吊销其设备（立即失效）再删除记录。确定？'
     : '确定删除该激活码？删除后无法恢复。';
   showConfirm('删除激活码', msg, function() {
-    if (c.used) { c.used = false; c.usedBy = null; c.usedAt = null; c.stateAt = now(); }
+    if (c.used) {
+      c.used = false;
+      c.usedAt = null;
+      c.revokedReason = 'manual';
+      c.stateAt = now();
+    }
+    // 墓碑：确保任何设备/云端同步都不会让该激活码复活
+    DB.tombstones = DB.tombstones || {};
+    DB.tombstones['activationCode:' + c.code] = { deletedAt: now(), record: JSON.parse(JSON.stringify(c)) };
     DB.activationCodes.splice(idx, 1);
     saveDB(); syncToCloud(); renderDeviceManage(); showToast('已删除该激活码');
   });
