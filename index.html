@@ -2739,7 +2739,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260918.238';
+var APP_VERSION = '20260918.239';
 // 扫码激活码（链接形如 #staff?act=CODE）
 var STAFF_ACT_CODE = '';
 
@@ -6020,6 +6020,8 @@ var PHOTO_BYTES_KEY = 'petBoardingPhotoBytes_v1';   // 新版：本地字节缓�
 var PHOTO_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 // 本地照片缓存策略：超过 N 天且非「在住/预订」订单的照片，启动与设置页清理时自动清掉（云端 data/photos/<id> 仍有备份，需要时自动重新加载）
 var PHOTO_CACHE_MAX_AGE_DAYS = 30;
+// 本地照片缓存硬上限：约 2MB。超出时按存入时间（ts）自动淘汰最旧照片，确保 localStorage 永不被照片撑爆（localStorage 总配额仅约 5MB，DB 已占 ~1.5MB）。
+var PHOTO_CACHE_MAX_BYTES = 2 * 1048576;
 var PHOTO_CACHE_OVERFLOW = false; // 溢出提示只飘一次，避免连拍
 var _photoFetching = {};
 
@@ -6044,7 +6046,25 @@ function savePhotoBytesWithCleanup(obj){
   return false;
 }
 function getPhotoBytes(id){ var b=loadPhotoBytes(); var e=b[id]; if(!e) return null; return (typeof e==='object')? e.d : e; }
-function setPhotoBytes(id, dataUrl){ var b=loadPhotoBytes(); b[id]={ d:dataUrl, ts:Date.now() }; savePhotoBytesWithCleanup(b); }
+// 强制照片缓存不超过硬上限：按 ts 升序（最旧优先）淘汰，直到总字节 <= PHOTO_CACHE_MAX_BYTES。
+// 这样即使某台设备一次性加载大量照片，也不会把 localStorage 撑爆而反复弹「空间不足」。
+function enforcePhotoCacheBudget(b){
+  var keys=Object.keys(b);
+  if(!keys.length) return b;
+  var total=0;
+  keys.forEach(function(k){ var e=b[k]; var d=(e&&typeof e==='object')?e.d:e; if(d) total+=d.length; });
+  if(total<=PHOTO_CACHE_MAX_BYTES) return b;
+  keys.sort(function(a,c){
+    var ta=(b[a]&&typeof b[a]==='object')?(b[a].ts||0):0;
+    var tc=(b[c]&&typeof b[c]==='object')?(b[c].ts||0):0;
+    return ta-tc;
+  });
+  for(var i=0;i<keys.length && total>PHOTO_CACHE_MAX_BYTES;i++){
+    var e=b[keys[i]]; var d=(e&&typeof e==='object')?e.d:e; if(d) total-=d.length; delete b[keys[i]];
+  }
+  return b;
+}
+function setPhotoBytes(id, dataUrl){ var b=loadPhotoBytes(); b[id]={ d:dataUrl, ts:Date.now() }; enforcePhotoCacheBudget(b); savePhotoBytesWithCleanup(b); }
 // 统计本地照片缓存占用
 function photoCacheInfo(){
   var b=loadPhotoBytes(); var keys=Object.keys(b); var bytes=0;
@@ -13418,6 +13438,11 @@ if (!DB.renewalRecords) DB.renewalRecords = [];
 if (APP_MODE !== 'view' && processAutoRenewals()) { saveDB(); }
 // 启动自动清理：清除 30 天前且非「在住/预订」订单的本地照片缓存，避免本机空间耗尽（云端 data/photos 仍有备份，打开订单时自动重新加载）
 if (APP_MODE !== 'view') { try { cleanOldPhotoCache(PHOTO_CACHE_MAX_AGE_DAYS); } catch(e){} }
+// 本地兜底：回收站（customerTrash）历史合并垃圾会无限累积、把 db.json 撑到数 MB 进而撑爆 localStorage（弹「空间不足」）。
+// 仅保留最近 500 条用于「误合恢复」，其余老旧垃圾直接丢弃（云端同步后各端一致，不会反复膨胀）。
+if (APP_MODE !== 'view' && DB.customerTrash && DB.customerTrash.length > 500) {
+  try { DB.customerTrash = DB.customerTrash.slice(-500); } catch(e){}
+}
 $('topDate').textContent = new Date().toLocaleDateString('zh-CN', {year:'numeric',month:'long',day:'numeric',weekday:'long'});
 // 若本次初始化清理了重复洗美单，提示并立即把墓碑同步到云端，保证各端/回收站一致
 if (window.__groomDedupeRemoved && APP_MODE !== 'view') {
