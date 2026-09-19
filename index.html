@@ -2779,7 +2779,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260920.249';
+var APP_VERSION = '20260920.250';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -13639,6 +13639,29 @@ if (window.__groomDedupeRemoved && APP_MODE !== 'view') {
   showToast('已自动清理 ' + window.__groomDedupeRemoved + ' 条重复洗美单');
   scheduleCloudSync();
 }
+
+// 首次打开 / 数据被清空 / 新设备：主动提示输入 GitHub Token 并拉云端，避免员工看到空数据不知所措
+(function autoPromptOnEmpty() {
+  if (APP_MODE === 'view') return;
+  setTimeout(function() {
+    try {
+      var hasData = (DB.orders && DB.orders.length > 0) || (DB.customers && DB.customers.length > 0);
+      if (hasData) return; // 本地已有数据，不打扰
+      if (!hasGitHubToken()) {
+        __tokenPrompted = false;
+        promptTokenIfInvalid();
+      } else {
+        syncFromCloud(function(ok, changed) {
+          if (changed) { saveDB(); renderEverything(); }
+          if (!ok) {
+            __tokenPrompted = false;
+            promptTokenIfInvalid();
+          }
+        });
+      }
+    } catch(e) {}
+  }, 1500);
+})();
 
 // 员工版：loadDB 之后再执行激活检查 + 水印（激活码随数据库从云端同步）
 if (APP_MODE === 'staff') {
