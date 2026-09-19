@@ -2786,7 +2786,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260919.246';
+var APP_VERSION = '20260919.247';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
@@ -2837,6 +2837,7 @@ if (APP_MODE === 'view') {
   </div>
   <div style="display:flex;align-items:center;gap:12px" data-page-node-id="eqOefIMdJ6DskSMg9xC92q">
     <button id="btnManualSync" onclick="manualSyncAll()" title="把别人刚录入的数据全部拉下来，同时上传本机改动" style="display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:20px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap" data-page-node-id="btnManualSyncNode">🔄<span class="syncBtnText">刷新同步</span></button>
+    <button onclick="manualCheckUpdate()" title="检查并更新 App 本身（不是同步数据）" style="display:flex;align-items:center;gap:6px;background:rgba(46,204,113,0.25);color:#fff;border:1px solid rgba(46,204,113,0.6);border-radius:20px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">🆕<span>更新App</span></button>
     <span id="syncIndicator" style="font-size:11px;color:rgba(255,255,255,0.7);white-space:nowrap" data-page-node-id="vZ5A8zAlX82cbwG0UBusSm">✅ 已同步</span>
     <div class="date" id="topDate" data-page-node-id="2xeVG34Do2UCDHyvxKRHYq"></div>
     <button class="help-btn" onclick="openHelpCurrent()" title="查看当前模块的使用帮助">❓ 帮助</button>
@@ -13820,6 +13821,32 @@ setInterval(function() { if ($('page-rebook') && $('page-rebook').classList.cont
   setInterval(check, 30000);
 })();
 
+// ============ 手动「更新App」按钮（主屏 App 没有浏览器刷新按钮，给员工一个明确入口） ============
+// 用带 _nocache 时间戳的新 URL 重载：微信/Safari 没有缓存过这个精确 URL，必然拉到最新 HTML；
+// 若已注册 Service Worker，则导航被 SW 拦截、同样走网络拉最新。两种方式都能让主屏 App 立即升级。
+window.manualCheckUpdate = function () {
+  try { showToast('正在检查更新…'); } catch (e) {}
+  var sep = location.search ? '&' : '?';
+  var url = location.pathname + location.search + sep + '_nocache=' + Date.now();
+  fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-store' } })
+    .then(function (r) { return r.text(); })
+    .then(function (txt) {
+      var m = txt && txt.match(/APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+      if (!m) { try { showToast('检查失败，请稍后再试'); } catch (e) {} return; }
+      var latest = m[1];
+      if (latest !== APP_VERSION) {
+        try { showToast('发现新版本 ' + latest + '，正在更新…'); } catch (e) {}
+        setTimeout(function () {
+          var s2 = location.search ? '&' : '?';
+          location.href = location.protocol + '//' + location.host + location.pathname + location.search + s2 + '_nocache=' + Date.now() + (location.hash || '');
+        }, 600);
+      } else {
+        try { showToast('已是最新版本 ' + APP_VERSION); } catch (e) {}
+      }
+    })
+    .catch(function () { try { showToast('网络异常，检查更新失败'); } catch (e) {} });
+};
+
 // ==================== 管理版：空闲激活码自动吊销 ====================
 // 扫描所有"已激活但超过 2 天未使用"的激活码并吊销（腾出给其他人）；员工端加载时也会自检自吊销。
 (function autoRevokeIdleActivations() {
@@ -13858,32 +13885,8 @@ window.showInstallPrompt = function() {
   }
 };
 
-// Service Worker - 注释掉，避免缓存旧版本导致用户看不到更新
-// 如果需要PWA离线功能，用户添加到桌面后浏览器会自动缓存
-/*
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    try {
-      var swCode = [
-        'self.addEventListener("install",function(e){self.skipWaiting()});',
-        'self.addEventListener("activate",function(e){e.waitUntil(clients.claim())});',
-        'self.addEventListener("fetch",function(e){e.respondWith(caches.match(e.request).then(function(r){return r||fetch(e.request)}))});'
-      ].join('\n');
-      var swBlob = new Blob([swCode], {type: 'application/javascript'});
-      var swUrl = URL.createObjectURL(swBlob);
-      navigator.serviceWorker.register(swUrl, {scope: './'}).catch(function(){});
-    } catch(e) {
-      console.warn('SW注册失败:', e.message);
-    }
-  });
-}
-*/
-// 主动注销旧的Service Worker，确保加载最新代码
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(regs) {
-    regs.forEach(function(reg) { reg.unregister(); });
-  });
-}
+// Service Worker：已在 <head> 注册仓库根目录的 sw.js（network-first，强制顶层文档走网络，绕开微信/Safari 的 HTML 强缓存）。
+// 切勿在此 unregister 任何 Service Worker —— 之前的注销逻辑会抵消 sw.js 的缓存破除效果，导致手机主屏 App 永远停在旧版。
 
 // 语音功能已移除
 
