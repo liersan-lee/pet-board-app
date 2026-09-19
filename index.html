@@ -43,6 +43,21 @@ var __Html5QrcodeLibrary__;(()=>{var t={449:function(t,e,r){!function(t){"use st
   } catch(e){}
 })();
 </script>
+<!-- Service Worker：强制顶层文档走网络，彻底干掉微信/Safari 的 HTML 强缓存，打开即最新版 -->
+<script>
+(function(){
+  try{
+    if(!('serviceWorker' in navigator)) return;
+    if(location.protocol !== 'https:' && location.protocol !== 'http:') return;
+    navigator.serviceWorker.register('sw.js', { scope: './' }).catch(function(){});
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(reloaded) return; reloaded = true;
+      try { location.reload(); } catch(e){}
+    });
+  }catch(e){}
+})();
+</script>
 <title>郊野宠物寄养工作台</title>
 <style>
 :root{--primary:#4A90D9;--primary-dark:#357ABD;--primary-light:#6FB0E3;--success:#27AE60;--warning:#F39C12;--danger:#E74C3C;--gray:#95A5A6;--gray-light:#ECF0F1;--gray-lighter:#F8F9FA;--dark:#2C3E50;--bg:#F0F2F5;--white:#FFF;--shadow:0 2px 8px rgba(0,0,0,0.08);--radius:10px;--radius-sm:6px}
@@ -2771,7 +2786,7 @@ var APP_MODE = (function() {
 })();
 
 // 应用版本号：每次发布新版本时递增，自动更新检测据此判断是否需要刷新页面
-var APP_VERSION = '20260919.245';
+var APP_VERSION = '20260919.246';
 // 功能开关：照片上传/扫码销售占用本地缓存与相机,已停用;现有照片仍可查看,手动进销保留。
 var FEATURE_PHOTO_UPLOAD = false;
 var FEATURE_BARCODE_SCAN = false;
